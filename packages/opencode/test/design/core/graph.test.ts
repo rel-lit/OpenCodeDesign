@@ -1,7 +1,16 @@
 import { describe, expect } from "bun:test"
-import { Effect } from "effect"
+import { Cause, Effect, Exit } from "effect"
 import { testEffect } from "../../lib/effect"
 import { GraphEngine } from "../../../src/design/core/graph"
+
+const expectGraphEngineError = <A, E>(effect: Effect.Effect<A, E>) =>
+  Effect.gen(function* () {
+    const exit = yield* Effect.exit(effect)
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) {
+      expect(Cause.squash(exit.cause)).toBeInstanceOf(GraphEngine.GraphEngineError)
+    }
+  })
 
 const it = testEffect(GraphEngine.defaultLayer)
 
@@ -122,6 +131,63 @@ describe("GraphEngine", () => {
       expect(byAlias.length).toBe(1)
       const byContext = yield* graph.findNodesByName("船", "ctx-battle")
       expect(byContext.length).toBe(1)
+    }),
+  )
+
+  it.effect("createEdge replacement updates connectedEdges prototypeId", () =>
+    Effect.gen(function* () {
+      const graph = yield* GraphEngine.Service
+      const ship = yield* graph.createNode({ name: "船", contextId: "ctx-battle", defaultSemantics: "" })
+      const hp = yield* graph.createNode({ name: "生命值", contextId: "ctx-battle", defaultSemantics: "" })
+      yield* graph.createEdge({ leftNodeId: ship.id, rightNodeId: hp.id, prototypeId: "aggregate", parameters: {} })
+      yield* graph.createEdge({ leftNodeId: ship.id, rightNodeId: hp.id, prototypeId: "associate", parameters: {} })
+      const foundShip = yield* graph.getNode(ship.id)
+      const foundHp = yield* graph.getNode(hp.id)
+      expect(foundShip?.connectedEdges).toHaveLength(1)
+      expect(foundShip?.connectedEdges[0].prototypeId).toBe("associate")
+      expect(foundHp?.connectedEdges).toHaveLength(1)
+      expect(foundHp?.connectedEdges[0].prototypeId).toBe("associate")
+    }),
+  )
+
+  it.effect("updateEdge updates connectedEdges prototypeId", () =>
+    Effect.gen(function* () {
+      const graph = yield* GraphEngine.Service
+      const ship = yield* graph.createNode({ name: "船", contextId: "ctx-battle", defaultSemantics: "" })
+      const hp = yield* graph.createNode({ name: "生命值", contextId: "ctx-battle", defaultSemantics: "" })
+      yield* graph.createEdge({ leftNodeId: ship.id, rightNodeId: hp.id, prototypeId: "aggregate", parameters: {} })
+      yield* graph.updateEdge(ship.id, hp.id, { prototypeId: "associate" })
+      const foundShip = yield* graph.getNode(ship.id)
+      const foundHp = yield* graph.getNode(hp.id)
+      expect(foundShip?.connectedEdges[0].prototypeId).toBe("associate")
+      expect(foundHp?.connectedEdges[0].prototypeId).toBe("associate")
+    }),
+  )
+
+  it.effect("deleteNode purges connectedEdges on surviving nodes", () =>
+    Effect.gen(function* () {
+      const graph = yield* GraphEngine.Service
+      const ship = yield* graph.createNode({ name: "船", contextId: "ctx-battle", defaultSemantics: "" })
+      const hp = yield* graph.createNode({ name: "生命值", contextId: "ctx-battle", defaultSemantics: "" })
+      yield* graph.createEdge({ leftNodeId: ship.id, rightNodeId: hp.id, prototypeId: "aggregate", parameters: {} })
+      yield* graph.deleteNode(ship.id)
+      const foundHp = yield* graph.getNode(hp.id)
+      expect(foundHp?.connectedEdges).toHaveLength(0)
+    }),
+  )
+
+  it.effect("typed errors for missing node operations", () =>
+    Effect.gen(function* () {
+      const graph = yield* GraphEngine.Service
+      yield* expectGraphEngineError(graph.updateNode("missing", { name: "x" }))
+      yield* expectGraphEngineError(graph.retireNode("missing", true))
+    }),
+  )
+
+  it.effect("typed error for missing edge update", () =>
+    Effect.gen(function* () {
+      const graph = yield* GraphEngine.Service
+      yield* expectGraphEngineError(graph.updateEdge("a", "b", { prototypeId: "x" }))
     }),
   )
 })

@@ -1,7 +1,11 @@
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, Schema } from "effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { type DeepMutable } from "@opencode-ai/core/schema"
 import { DesignTypes } from "./types"
+
+export class GraphEngineError extends Schema.TaggedErrorClass<GraphEngineError>()("GraphEngineError", {
+  message: Schema.String,
+}) {}
 
 export interface Interface {
   readonly createNode: (input: {
@@ -10,8 +14,8 @@ export interface Interface {
     defaultSemantics?: string
     aliases?: string[]
   }) => Effect.Effect<DesignTypes.Node>
-  readonly updateNode: (id: string, input: Partial<Omit<DesignTypes.Node, "id" | "createdAt">>) => Effect.Effect<DesignTypes.Node, Error>
-  readonly retireNode: (id: string, retired: boolean) => Effect.Effect<DesignTypes.Node, Error>
+  readonly updateNode: (id: string, input: Partial<Omit<DesignTypes.Node, "id" | "createdAt">>) => Effect.Effect<DesignTypes.Node, GraphEngineError>
+  readonly retireNode: (id: string, retired: boolean) => Effect.Effect<DesignTypes.Node, GraphEngineError>
   readonly deleteNode: (id: string) => Effect.Effect<void>
   readonly getNode: (id: string) => Effect.Effect<DesignTypes.Node | undefined>
   readonly listNodes: () => Effect.Effect<DesignTypes.Node[]>
@@ -35,7 +39,7 @@ export interface Interface {
   readonly listPrototypes: () => Effect.Effect<DesignTypes.RelationPrototype[]>
 
   readonly createEdge: (input: Omit<DesignTypes.Edge, "createdAt" | "updatedAt">) => Effect.Effect<DesignTypes.Edge>
-  readonly updateEdge: (leftNodeId: string, rightNodeId: string, input: Partial<Pick<DesignTypes.Edge, "prototypeId" | "parameters">>) => Effect.Effect<DesignTypes.Edge, Error>
+  readonly updateEdge: (leftNodeId: string, rightNodeId: string, input: Partial<Pick<DesignTypes.Edge, "prototypeId" | "parameters">>) => Effect.Effect<DesignTypes.Edge, GraphEngineError>
   readonly deleteEdge: (leftNodeId: string, rightNodeId: string) => Effect.Effect<void>
   readonly getEdge: (leftNodeId: string, rightNodeId: string) => Effect.Effect<DesignTypes.Edge | undefined>
   readonly listEdges: () => Effect.Effect<DesignTypes.Edge[]>
@@ -162,6 +166,16 @@ export const layer = Layer.effect(
 
       if (existingIndex >= 0) {
         state.edges[existingIndex] = edge
+        const left = state.nodes.find((n) => n.id === input.leftNodeId)
+        const right = state.nodes.find((n) => n.id === input.rightNodeId)
+        if (left) {
+          const entry = left.connectedEdges.find((e) => DesignTypes.edgeKey(e.leftNodeId, e.rightNodeId) === key)
+          if (entry) entry.prototypeId = input.prototypeId
+        }
+        if (right) {
+          const entry = right.connectedEdges.find((e) => DesignTypes.edgeKey(e.leftNodeId, e.rightNodeId) === key)
+          if (entry) entry.prototypeId = input.prototypeId
+        }
       } else {
         state.edges.push(edge)
         const left = state.nodes.find((n) => n.id === input.leftNodeId)
@@ -174,9 +188,17 @@ export const layer = Layer.effect(
     })
 
     const updateEdge = Effect.fn("GraphEngine.updateEdge")(function* (leftNodeId, rightNodeId, input) {
+      const key = DesignTypes.edgeKey(leftNodeId, rightNodeId)
       const edge = yield* getEdge(leftNodeId, rightNodeId)
-      if (!edge) return yield* Effect.fail(new Error(`Edge not found: ${leftNodeId} <-> ${rightNodeId}`))
-      if (input.prototypeId !== undefined) edge.prototypeId = input.prototypeId
+      if (!edge) return yield* new GraphEngineError({ message: `Edge not found: ${leftNodeId} <-> ${rightNodeId}` })
+      if (input.prototypeId !== undefined) {
+        edge.prototypeId = input.prototypeId
+        for (const node of state.nodes) {
+          if (node.id !== leftNodeId && node.id !== rightNodeId) continue
+          const entry = node.connectedEdges.find((e) => DesignTypes.edgeKey(e.leftNodeId, e.rightNodeId) === key)
+          if (entry) entry.prototypeId = input.prototypeId
+        }
+      }
       if (input.parameters !== undefined) edge.parameters = input.parameters
       edge.updatedAt = now()
       return edge
@@ -194,13 +216,13 @@ export const layer = Layer.effect(
       createNode,
       updateNode: Effect.fn("GraphEngine.updateNode")(function* (id, input) {
         const node = state.nodes.find((n) => n.id === id)
-        if (!node) return yield* Effect.fail(new Error(`Node not found: ${id}`))
+        if (!node) return yield* new GraphEngineError({ message: `Node not found: ${id}` })
         Object.assign(node, input, { updatedAt: now() })
         return node
       }),
       retireNode: Effect.fn("GraphEngine.retireNode")(function* (id, retired) {
         const node = state.nodes.find((n) => n.id === id)
-        if (!node) return yield* Effect.fail(new Error(`Node not found: ${id}`))
+        if (!node) return yield* new GraphEngineError({ message: `Node not found: ${id}` })
         node.retired = retired
         node.updatedAt = now()
         return node
@@ -208,6 +230,9 @@ export const layer = Layer.effect(
       deleteNode: Effect.fn("GraphEngine.deleteNode")(function* (id) {
         state.nodes = state.nodes.filter((n) => n.id !== id)
         state.edges = state.edges.filter((e) => e.leftNodeId !== id && e.rightNodeId !== id)
+        for (const node of state.nodes) {
+          node.connectedEdges = node.connectedEdges.filter((e) => e.leftNodeId !== id && e.rightNodeId !== id)
+        }
         for (const ctx of state.contexts) {
           ctx.nodeIds = ctx.nodeIds.filter((nid) => nid !== id)
         }
