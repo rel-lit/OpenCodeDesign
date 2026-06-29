@@ -14,6 +14,7 @@ import PROMPT_COMPACTION from "./prompt/compaction.txt"
 import PROMPT_EXPLORE from "./prompt/explore.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
+import PROMPT_DESIGN from "./prompt/design.txt"
 import { Permission } from "@/permission"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Global } from "@opencode-ai/core/global"
@@ -176,10 +177,40 @@ export const layer = Layer.effect(
               }),
               user,
             ),
-            mode: "primary",
-            native: true,
-          },
-          general: {
+          mode: "primary",
+          native: true,
+        },
+        design: {
+          name: "design",
+          description: "Design mode. Operates on a semantic graph of nodes, edges, and bounded contexts.",
+          options: {},
+          permission: Permission.merge(
+            defaults,
+            Permission.fromConfig({
+              question: "allow",
+              read: "deny",
+              grep: "deny",
+              glob: "deny",
+              bash: "deny",
+              edit: "deny",
+              write: "deny",
+              apply_patch: "deny",
+              task: "deny",
+              design_resolve_reference: "allow",
+              design_create_context: "allow",
+              design_create_node: "allow",
+              design_create_edge: "allow",
+              design_list_nodes: "allow",
+              design_list_edges: "allow",
+              design_show_working_set: "allow",
+            }),
+            user,
+          ),
+          mode: "primary",
+          native: true,
+          prompt: PROMPT_DESIGN,
+        },
+        general: {
             name: "general",
             description: `General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.`,
             permission: Permission.merge(

@@ -2,6 +2,16 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { PlanExitTool } from "./plan"
+import {
+  DesignCreateContextTool,
+  DesignCreateEdgeTool,
+  DesignCreateNodeTool,
+  DesignListEdgesTool,
+  DesignListNodesTool,
+  DesignResolveReferenceTool,
+  DesignShowWorkingSetTool,
+} from "./design"
+import { Design } from "@/design/design"
 import { Session } from "@/session/session"
 import { QuestionTool } from "./question"
 import { ShellTool } from "./shell"
@@ -106,6 +116,13 @@ export const layer = Layer.effect(
     const patchtool = yield* ApplyPatchTool
     const skilltool = yield* SkillTool
     const agent = yield* Agent.Service
+    const designResolveReference = yield* DesignResolveReferenceTool
+    const designCreateContext = yield* DesignCreateContextTool
+    const designCreateNode = yield* DesignCreateNodeTool
+    const designCreateEdge = yield* DesignCreateEdgeTool
+    const designListNodes = yield* DesignListNodesTool
+    const designListEdges = yield* DesignListEdgesTool
+    const designShowWorkingSet = yield* DesignShowWorkingSetTool
 
     const state = yield* InstanceState.make<State>(
       Effect.fn("ToolRegistry.state")(function* (ctx) {
@@ -212,6 +229,13 @@ export const layer = Layer.effect(
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
           plan: Tool.init(plan),
+          design_resolve_reference: Tool.init(designResolveReference),
+          design_create_context: Tool.init(designCreateContext),
+          design_create_node: Tool.init(designCreateNode),
+          design_create_edge: Tool.init(designCreateEdge),
+          design_list_nodes: Tool.init(designListNodes),
+          design_list_edges: Tool.init(designListEdges),
+          design_show_working_set: Tool.init(designShowWorkingSet),
         })
 
         return {
@@ -233,6 +257,13 @@ export const layer = Layer.effect(
             tool.patch,
             ...(flags.experimentalLspTool ? [tool.lsp] : []),
             ...(flags.experimentalPlanMode && flags.client === "cli" ? [tool.plan] : []),
+            tool.design_resolve_reference,
+            tool.design_create_context,
+            tool.design_create_node,
+            tool.design_create_edge,
+            tool.design_list_nodes,
+            tool.design_list_edges,
+            tool.design_show_working_set,
           ],
           task: tool.task,
           read: tool.read,
@@ -335,6 +366,7 @@ export const defaultLayer = Layer.suspend(() =>
       Layer.provide(Format.defaultLayer),
       Layer.provide(CrossSpawnSpawner.defaultLayer),
       Layer.provide(Truncate.defaultLayer),
+      Layer.provide(Design.defaultLayer),
     )
     .pipe(Layer.provide(Database.defaultLayer), Layer.provide(RuntimeFlags.defaultLayer)),
 )
@@ -438,6 +470,7 @@ export const node = LayerNode.make({
     Truncate.node,
     RuntimeFlags.node,
     Database.node,
+    Design.node,
   ],
 })
 
