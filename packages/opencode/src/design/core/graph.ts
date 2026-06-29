@@ -1,0 +1,242 @@
+import { Context, Effect, Layer } from "effect"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { type DeepMutable } from "@opencode-ai/core/schema"
+import { DesignTypes } from "./types"
+
+export interface Interface {
+  readonly createNode: (input: {
+    name: string
+    contextId: string
+    defaultSemantics?: string
+    aliases?: string[]
+  }) => Effect.Effect<DesignTypes.Node>
+  readonly updateNode: (id: string, input: Partial<Omit<DesignTypes.Node, "id" | "createdAt">>) => Effect.Effect<DesignTypes.Node, Error>
+  readonly retireNode: (id: string, retired: boolean) => Effect.Effect<DesignTypes.Node, Error>
+  readonly deleteNode: (id: string) => Effect.Effect<void>
+  readonly getNode: (id: string) => Effect.Effect<DesignTypes.Node | undefined>
+  readonly listNodes: () => Effect.Effect<DesignTypes.Node[]>
+  readonly findNodesByName: (name: string, contextId?: string) => Effect.Effect<DesignTypes.Node[]>
+
+  readonly createContext: (input: {
+    id?: string
+    name: string
+    semantics?: string
+  }) => Effect.Effect<DesignTypes.BoundedContext>
+  readonly getContext: (id: string) => Effect.Effect<DesignTypes.BoundedContext | undefined>
+  readonly listContexts: () => Effect.Effect<DesignTypes.BoundedContext[]>
+
+  readonly createPrototype: (input: {
+    id?: string
+    name: string
+    defaultSemantics?: string
+    parameterSchema?: Record<string, unknown>
+  }) => Effect.Effect<DesignTypes.RelationPrototype>
+  readonly getPrototype: (id: string) => Effect.Effect<DesignTypes.RelationPrototype | undefined>
+  readonly listPrototypes: () => Effect.Effect<DesignTypes.RelationPrototype[]>
+
+  readonly createEdge: (input: Omit<DesignTypes.Edge, "createdAt" | "updatedAt">) => Effect.Effect<DesignTypes.Edge>
+  readonly updateEdge: (leftNodeId: string, rightNodeId: string, input: Partial<Pick<DesignTypes.Edge, "prototypeId" | "parameters">>) => Effect.Effect<DesignTypes.Edge, Error>
+  readonly deleteEdge: (leftNodeId: string, rightNodeId: string) => Effect.Effect<void>
+  readonly getEdge: (leftNodeId: string, rightNodeId: string) => Effect.Effect<DesignTypes.Edge | undefined>
+  readonly listEdges: () => Effect.Effect<DesignTypes.Edge[]>
+  readonly listEdgesForNode: (nodeId: string) => Effect.Effect<DesignTypes.Edge[]>
+}
+
+export class Service extends Context.Service<Service, Interface>()("@opencode/DesignGraphEngine") {}
+
+const makeId = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+
+type MutableState = DeepMutable<DesignTypes.GraphState>
+
+export const layer = Layer.effect(
+  Service,
+  Effect.gen(function* () {
+    let state: MutableState = {
+      nodes: [],
+      edges: [],
+      prototypes: [],
+      contexts: [],
+      workingSet: { activeContextIds: [], activeNodeIds: [], capacity: 20 },
+      eventLog: { events: [] },
+    }
+
+    const now = () => Date.now()
+
+    const createNode = Effect.fn("GraphEngine.createNode")(function* (input) {
+      const node: MutableState["nodes"][number] = {
+        id: makeId("node"),
+        name: input.name,
+        aliases: input.aliases ?? [],
+        contextId: input.contextId,
+        defaultSemantics: input.defaultSemantics ?? "",
+        connectedEdges: [],
+        createdAt: now(),
+        updatedAt: now(),
+        retired: false,
+      }
+      state.nodes.push(node)
+      const ctx = state.contexts.find((c) => c.id === input.contextId)
+      if (ctx) ctx.nodeIds.push(node.id)
+      return node
+    })
+
+    const getNode = Effect.fnUntraced(function* (id: string) {
+      return state.nodes.find((n) => n.id === id)
+    })
+
+    const listNodes = Effect.fnUntraced(function* () {
+      return [...state.nodes]
+    })
+
+    const findNodesByName = Effect.fn("GraphEngine.findNodesByName")(function* (name, contextId) {
+      return state.nodes.filter((n) => {
+        const matchName = n.name === name || n.aliases.includes(name)
+        if (!matchName) return false
+        if (contextId && n.contextId !== contextId) return false
+        return true
+      })
+    })
+
+    const createContext = Effect.fn("GraphEngine.createContext")(function* (input) {
+      const ctx: MutableState["contexts"][number] = {
+        id: input.id ?? makeId("ctx"),
+        name: input.name,
+        semantics: input.semantics ?? "",
+        nodeIds: [],
+      }
+      state.contexts.push(ctx)
+      return ctx
+    })
+
+    const getContext = Effect.fnUntraced(function* (id: string) {
+      return state.contexts.find((c) => c.id === id)
+    })
+
+    const listContexts = Effect.fnUntraced(function* () {
+      return [...state.contexts]
+    })
+
+    const createPrototype = Effect.fn("GraphEngine.createPrototype")(function* (input) {
+      const proto: MutableState["prototypes"][number] = {
+        id: input.id ?? makeId("proto"),
+        name: input.name,
+        defaultSemantics: input.defaultSemantics ?? "",
+        parameterSchema: input.parameterSchema ?? {},
+      }
+      state.prototypes.push(proto)
+      return proto
+    })
+
+    const getPrototype = Effect.fnUntraced(function* (id: string) {
+      return state.prototypes.find((p) => p.id === id)
+    })
+
+    const listPrototypes = Effect.fnUntraced(function* () {
+      return [...state.prototypes]
+    })
+
+    const getEdge = Effect.fnUntraced(function* (leftNodeId: string, rightNodeId: string) {
+      const key = DesignTypes.edgeKey(leftNodeId, rightNodeId)
+      return state.edges.find((e) => DesignTypes.edgeKey(e.leftNodeId, e.rightNodeId) === key)
+    })
+
+    const listEdges = Effect.fnUntraced(function* () {
+      return [...state.edges]
+    })
+
+    const listEdgesForNode = Effect.fn("GraphEngine.listEdgesForNode")(function* (nodeId) {
+      return state.edges.filter((e) => e.leftNodeId === nodeId || e.rightNodeId === nodeId)
+    })
+
+    const createEdge = Effect.fn("GraphEngine.createEdge")(function* (input) {
+      const key = DesignTypes.edgeKey(input.leftNodeId, input.rightNodeId)
+      const existingIndex = state.edges.findIndex((e) => DesignTypes.edgeKey(e.leftNodeId, e.rightNodeId) === key)
+      const edge: MutableState["edges"][number] = {
+        leftNodeId: input.leftNodeId,
+        rightNodeId: input.rightNodeId,
+        prototypeId: input.prototypeId,
+        parameters: input.parameters ?? {},
+        createdAt: now(),
+        updatedAt: now(),
+      }
+
+      if (existingIndex >= 0) {
+        state.edges[existingIndex] = edge
+      } else {
+        state.edges.push(edge)
+        const left = state.nodes.find((n) => n.id === input.leftNodeId)
+        const right = state.nodes.find((n) => n.id === input.rightNodeId)
+        if (left) left.connectedEdges.push({ leftNodeId: input.leftNodeId, rightNodeId: input.rightNodeId, prototypeId: input.prototypeId })
+        if (right) right.connectedEdges.push({ leftNodeId: input.leftNodeId, rightNodeId: input.rightNodeId, prototypeId: input.prototypeId })
+      }
+
+      return edge
+    })
+
+    const updateEdge = Effect.fn("GraphEngine.updateEdge")(function* (leftNodeId, rightNodeId, input) {
+      const edge = yield* getEdge(leftNodeId, rightNodeId)
+      if (!edge) return yield* Effect.fail(new Error(`Edge not found: ${leftNodeId} <-> ${rightNodeId}`))
+      if (input.prototypeId !== undefined) edge.prototypeId = input.prototypeId
+      if (input.parameters !== undefined) edge.parameters = input.parameters
+      edge.updatedAt = now()
+      return edge
+    })
+
+    const deleteEdge = Effect.fn("GraphEngine.deleteEdge")(function* (leftNodeId, rightNodeId) {
+      const key = DesignTypes.edgeKey(leftNodeId, rightNodeId)
+      state.edges = state.edges.filter((e) => DesignTypes.edgeKey(e.leftNodeId, e.rightNodeId) !== key)
+      for (const node of state.nodes) {
+        node.connectedEdges = node.connectedEdges.filter((e) => DesignTypes.edgeKey(e.leftNodeId, e.rightNodeId) !== key)
+      }
+    })
+
+    return Service.of({
+      createNode,
+      updateNode: Effect.fn("GraphEngine.updateNode")(function* (id, input) {
+        const node = state.nodes.find((n) => n.id === id)
+        if (!node) return yield* Effect.fail(new Error(`Node not found: ${id}`))
+        Object.assign(node, input, { updatedAt: now() })
+        return node
+      }),
+      retireNode: Effect.fn("GraphEngine.retireNode")(function* (id, retired) {
+        const node = state.nodes.find((n) => n.id === id)
+        if (!node) return yield* Effect.fail(new Error(`Node not found: ${id}`))
+        node.retired = retired
+        node.updatedAt = now()
+        return node
+      }),
+      deleteNode: Effect.fn("GraphEngine.deleteNode")(function* (id) {
+        state.nodes = state.nodes.filter((n) => n.id !== id)
+        state.edges = state.edges.filter((e) => e.leftNodeId !== id && e.rightNodeId !== id)
+        for (const ctx of state.contexts) {
+          ctx.nodeIds = ctx.nodeIds.filter((nid) => nid !== id)
+        }
+      }),
+      getNode,
+      listNodes,
+      findNodesByName,
+      createContext,
+      getContext,
+      listContexts,
+      createPrototype,
+      getPrototype,
+      listPrototypes,
+      createEdge,
+      updateEdge,
+      deleteEdge,
+      getEdge,
+      listEdges,
+      listEdgesForNode,
+    })
+  }),
+)
+
+export const defaultLayer = layer
+
+export const node = LayerNode.make({
+  service: Service,
+  layer: defaultLayer,
+  deps: [],
+})
+
+export * as GraphEngine from "./graph"
