@@ -61,33 +61,49 @@ export const layer = Layer.effect(
       yield* Effect.log("Loaded design state (restoration deferred to P2)")
     })
 
+    const persistMutation = Effect.fn("Design.persistMutation")(function* (event: DesignTypes.EventNode) {
+      yield* persistence.appendEvent(event)
+      yield* save()
+    })
+
     return Service.of({
       createContext: (input) =>
         Effect.gen(function* () {
           const ctx = yield* graph.createContext(input)
-          yield* eventLog.append({ eventType: "context_created", affectedNodeIds: [], affectedEdgeKeys: [] })
+          const event = yield* eventLog.append({ eventType: "context_created", affectedNodeIds: [], affectedEdgeKeys: [] })
           yield* workingSet.activateContext(ctx.id)
+          yield* persistMutation(event)
           return ctx
         }),
       createNode: (input) =>
         Effect.gen(function* () {
           const node = yield* graph.createNode(input)
-          yield* eventLog.append({ eventType: "node_created", affectedNodeIds: [node.id] })
+          const event = yield* eventLog.append({ eventType: "node_created", affectedNodeIds: [node.id] })
           yield* workingSet.activateNode(node.id)
+          yield* persistMutation(event)
           return node
         }),
       createEdge: (input) =>
         Effect.gen(function* () {
           const edge = yield* graph.createEdge(input)
-          yield* eventLog.append({
+          const event = yield* eventLog.append({
             eventType: "edge_created",
             affectedNodeIds: [edge.leftNodeId, edge.rightNodeId],
             affectedEdgeKeys: [DesignTypes.edgeKey(edge.leftNodeId, edge.rightNodeId)],
           })
           yield* Effect.all([workingSet.activateNode(edge.leftNodeId), workingSet.activateNode(edge.rightNodeId)])
+          yield* persistMutation(event)
           return edge
         }),
-      resolveReference: workingSet.resolveReference,
+      resolveReference: (input) =>
+        Effect.gen(function* () {
+          const result = yield* workingSet.resolveReference(input)
+          if (result.action === "created") {
+            const event = yield* eventLog.append({ eventType: "node_created", affectedNodeIds: [result.nodeId] })
+            yield* persistMutation(event)
+          }
+          return result
+        }),
       listNodes: graph.listNodes,
       listEdges: graph.listEdges,
       listWorkingSet: workingSet.list,

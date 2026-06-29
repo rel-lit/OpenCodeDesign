@@ -54,7 +54,7 @@ packages/opencode/test/tool/design.test.ts
 **Interfaces:**
 - Produces: `Node`, `Edge`, `RelationPrototype`, `BoundedContext`, `WorkingSet`, `EventLog`, `EventNode` 类型与 Schema。
 
-- [ ] **Step 1: Write types.ts**
+- [x] **Step 1: Write types.ts**
 
 ```typescript
 import { Schema } from "effect"
@@ -173,7 +173,7 @@ export const edgeKey = (leftNodeId: string, rightNodeId: string): string =>
 export * as DesignTypes from "./types"
 ```
 
-- [ ] **Step 2: Run typecheck**
+- [x] **Step 2: Run typecheck**
 
 ```bash
 cd packages/opencode
@@ -182,7 +182,7 @@ bun typecheck
 
 Expected: PASS
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add packages/opencode/src/design/core/types.ts
@@ -201,7 +201,7 @@ git commit -m "feat(design): add core type schemas"
 - Consumes: `DesignTypes.Node`, `DesignTypes.Edge`, etc.
 - Produces: `GraphEngine` service with `createNode`, `updateNode`, `createContext`, `createEdge`, `getEdge`, `listNodes`, `listEdges` 等方法。
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
 
 ```typescript
 import { describe, expect } from "bun:test"
@@ -246,7 +246,7 @@ describe("GraphEngine", () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 ```bash
 cd packages/opencode
@@ -255,7 +255,7 @@ bun test test/design/core/graph.test.ts
 
 Expected: FAIL (module not found)
 
-- [ ] **Step 3: Implement graph.ts**
+- [x] **Step 3: Implement graph.ts**
 
 ```typescript
 import { Context, Effect, Schema } from "effect"
@@ -500,7 +500,7 @@ export const node = LayerNode.make({
 export * as GraphEngine from "./graph"
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 ```bash
 cd packages/opencode
@@ -509,7 +509,7 @@ bun test test/design/core/graph.test.ts
 
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/opencode/src/design/core/graph.ts packages/opencode/test/design/core/graph.test.ts
@@ -528,7 +528,7 @@ git commit -m "feat(design): add graph engine with node and edge management"
 - Consumes: `DesignTypes.WorkingSet`, `DesignTypes.Node`, `GraphEngine`.
 - Produces: `WorkingSetManager` service with `activateNode`, `forgetNode`, `activateContext`, `forgetContext`, `resolveReference`, `list` 等方法。
 
-- [ ] **Step 1: Write working-set.ts**
+- [x] **Step 1: Write working-set.ts**
 
 ```typescript
 import { Context, Effect, Layer } from "effect"
@@ -690,7 +690,7 @@ export const node = LayerNode.make({
 export * as WorkingSet from "./working-set"
 ```
 
-- [ ] **Step 2: Write test**
+- [x] **Step 2: Write test**
 
 ```typescript
 import { describe, expect } from "bun:test"
@@ -728,7 +728,7 @@ describe("WorkingSet", () => {
 })
 ```
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 ```bash
 cd packages/opencode
@@ -737,7 +737,7 @@ bun test test/design/core/working-set.test.ts
 
 Expected: PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add packages/opencode/src/design/core/working-set.ts packages/opencode/test/design/core/working-set.test.ts
@@ -756,7 +756,7 @@ git commit -m "feat(design): add working set manager with LRU and reference reso
 - Consumes: `DesignTypes.EventNode`, `DesignTypes.EventType`.
 - Produces: `EventLog` service with `append`, `rollbackTo`, `list` 方法。
 
-- [ ] **Step 1: Implement event-log.ts**
+- [x] **Step 1: Implement event-log.ts**
 
 ```typescript
 import { Context, Effect, Layer } from "effect"
@@ -836,7 +836,7 @@ export const node = LayerNode.make({
 export * as EventLog from "./event-log"
 ```
 
-- [ ] **Step 2: Write test**
+- [x] **Step 2: Write test**
 
 ```typescript
 import { describe, expect } from "bun:test"
@@ -871,7 +871,7 @@ describe("EventLog", () => {
 })
 ```
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 ```bash
 cd packages/opencode
@@ -880,7 +880,7 @@ bun test test/design/core/event-log.test.ts
 
 Expected: PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add packages/opencode/src/design/core/event-log.ts packages/opencode/test/design/core/event-log.test.ts
@@ -899,7 +899,7 @@ git commit -m "feat(design): add immutable event log with rollback"
 - Consumes: `DesignTypes.GraphState`.
 - Produces: `Persistence` service with `save`, `load`, `appendEvent` 方法。
 
-- [ ] **Step 1: Implement persistence.ts**
+- [x] **Step 1: Implement persistence.ts**
 
 ```typescript
 import { Context, Effect, Layer } from "effect"
@@ -973,7 +973,7 @@ export const node = LayerNode.make({
 export * as Persistence from "./persistence"
 ```
 
-- [ ] **Step 2: Write persistence test**
+- [x] **Step 2: Write persistence test**
 
 ```typescript
 import { describe, expect } from "bun:test"
@@ -1004,7 +1004,7 @@ describe("Persistence", () => {
 })
 ```
 
-- [ ] **Step 3: Commit
+- [x] **Step 3: Commit
 
 ```bash
 git add packages/opencode/src/design/core/persistence.ts packages/opencode/test/design/core/persistence.test.ts
@@ -1023,7 +1023,7 @@ git commit -m "feat(design): add json/jsonl persistence layer"
 - Consumes: `GraphEngine`, `WorkingSet`, `EventLog`, `Persistence`.
 - Produces: `Design` service exposing high-level operations used by tools.
 
-- [ ] **Step 1: Implement design.ts**
+- [x] **Step 1: Implement design.ts**
 
 ```typescript
 import { Context, Effect, Layer } from "effect"
@@ -1142,7 +1142,7 @@ export const node = LayerNode.make({
 export * as Design from "./design"
 ```
 
-- [ ] **Step 2: Implement index.ts**
+- [x] **Step 2: Implement index.ts**
 
 ```typescript
 export * as Design from "./design"
@@ -1153,7 +1153,7 @@ export * as Persistence from "./core/persistence"
 export * as DesignTypes from "./core/types"
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add packages/opencode/src/design/design.ts packages/opencode/src/design/index.ts
@@ -1172,7 +1172,7 @@ git commit -m "feat(design): add design service composing core engine"
 - Consumes: `Design.Service`.
 - Produces: `DesignResolveReferenceTool`, `DesignCreateContextTool`, `DesignCreateNodeTool` Tool.Info objects.
 
-- [ ] **Step 1: Create design.ts with first three tools**
+- [x] **Step 1: Create design.ts with first three tools**
 
 ```typescript
 import { Effect, Schema } from "effect"
@@ -1261,7 +1261,7 @@ export const DesignCreateNodeTool = Tool.define(
 )
 ```
 
-- [ ] **Step 2: Commit partial tools**
+- [x] **Step 2: Commit partial tools**
 
 ```bash
 git add packages/opencode/src/tool/design.ts
@@ -1279,7 +1279,7 @@ git commit -m "feat(design): add resolve_reference, create_context, create_node 
 **Interfaces:**
 - Produces: `DesignCreateEdgeTool`, `DesignListNodesTool`, `DesignListEdgesTool`, `DesignShowWorkingSetTool`.
 
-- [ ] **Step 1: Add remaining tools to design.ts**
+- [x] **Step 1: Add remaining tools to design.ts**
 
 Append to `packages/opencode/src/tool/design.ts`:
 
@@ -1379,7 +1379,7 @@ export const DesignShowWorkingSetTool = Tool.define(
 )
 ```
 
-- [ ] **Step 2: Register tools in registry.ts**
+- [x] **Step 2: Register tools in registry.ts**
 
 Modify `packages/opencode/src/tool/registry.ts`:
 
@@ -1466,7 +1466,7 @@ export const node = LayerNode.make({
 })
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add packages/opencode/src/tool/design.ts packages/opencode/src/tool/registry.ts
@@ -1484,7 +1484,7 @@ git commit -m "feat(design): register all seven design tools"
 **Interfaces:**
 - Produces: registered `design` Agent with appropriate permissions and prompt.
 
-- [ ] **Step 1: Create design.txt**
+- [x] **Step 1: Create design.txt**
 
 ```text
 You are the Design agent for OpenCode Design. Your purpose is to help the user build and evolve a semantic design graph through conversation.
@@ -1510,7 +1510,7 @@ When the user describes a relationship (e.g., "A has B", "A is part of B"), use 
 Always confirm the result of your operations briefly, then ask what the user wants to do next.
 ```
 
-- [ ] **Step 2: Import prompt in agent.ts**
+- [x] **Step 2: Import prompt in agent.ts**
 
 Add to imports in `packages/opencode/src/agent/agent.ts`:
 
@@ -1518,7 +1518,7 @@ Add to imports in `packages/opencode/src/agent/agent.ts`:
 import PROMPT_DESIGN from "./prompt/design.txt"
 ```
 
-- [ ] **Step 3: Register design agent**
+- [x] **Step 3: Register design agent**
 
 In the `agents` record in `packages/opencode/src/agent/agent.ts`, add after `plan`:
 
@@ -1555,7 +1555,7 @@ design: {
 },
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add packages/opencode/src/session/prompt/design.txt packages/opencode/src/agent/agent.ts
@@ -1573,7 +1573,7 @@ git commit -m "feat(design): register design agent with prompt and permissions"
 - Consumes: `Design` tools.
 - Produces: passing tests for each design tool.
 
-- [ ] **Step 1: Write design.test.ts**
+- [x] **Step 1: Write design.test.ts**
 
 ```typescript
 import { describe, expect } from "bun:test"
@@ -1660,7 +1660,7 @@ describe("Design tools", () => {
 })
 ```
 
-- [ ] **Step 2: Run tests**
+- [x] **Step 2: Run tests**
 
 ```bash
 cd packages/opencode
@@ -1669,7 +1669,7 @@ bun test test/tool/design.test.ts
 
 Expected: PASS
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add packages/opencode/test/tool/design.test.ts
@@ -1682,7 +1682,7 @@ git commit -m "test(design): add design tool integration tests"
 
 **Files:** None (verification task).
 
-- [ ] **Step 1: Run full typecheck**
+- [x] **Step 1: Run full typecheck**
 
 ```bash
 cd packages/opencode
@@ -1691,7 +1691,7 @@ bun typecheck
 
 Expected: PASS (or only pre-existing errors unrelated to design code).
 
-- [ ] **Step 2: Run design-related tests**
+- [x] **Step 2: Run design-related tests**
 
 ```bash
 cd packages/opencode
@@ -1700,7 +1700,7 @@ bun test test/design test/tool/design.test.ts
 
 Expected: PASS
 
-- [ ] **Step 3: Manual smoke test (optional but recommended)**
+- [x] **Step 3: Manual smoke test (optional but recommended)**
 
 Build OpenCode and start the TUI:
 
@@ -1719,7 +1719,7 @@ In the TUI:
 6. Type: `船有生命值，上限 1000`
 7. Observe LLM calls `design_resolve_reference` and `design_create_edge`.
 
-- [ ] **Step 4: Final commit**
+- [x] **Step 4: Final commit**
 
 ```bash
 git commit --allow-empty -m "chore(design): complete first milestone - design mode core and tools"
@@ -1761,3 +1761,32 @@ Two execution options:
 2. **Inline Execution** - Execute tasks in this session using `executing-plans`, batch execution with checkpoints.
 
 Which approach would you like?
+
+---
+
+## 完成记录
+
+**完成时间**：2026-06-30
+
+**最终验证二进制**：`packages/opencode/dist/opencode-windows-x64/bin/opencode.exe` 版本 `0.0.0-dev-202606291914`
+
+**测试状态**：
+
+- Design 相关单元测试：24 个全部通过
+- Design 源码 typecheck：通过（仅存在与本次实现无关的预有 `test/session/prompt.test.ts` 错误）
+- 端到端验证：在干净目录下运行 `--agent design`，通过对话成功创建 context、node、edge，并生成 `graph.json` 与 `events.jsonl`
+
+**关键修复**（本次里程碑提交）：
+
+- TUI spinner 注册修复：`packages/opencode/src/cli/cmd/run.ts`
+- 构建 splitting 关闭：`packages/opencode/script/build.ts`
+- Design service 注入：`packages/opencode/src/effect/app-runtime.ts`
+- mutation 自动持久化：`packages/opencode/src/design/design.ts`
+- 文档更新：`docs/superpowers/specs/2026-06-29-design-mode-design.md`、`docs/superpowers/plans/2026-06-29-design-mode.md`
+
+**P2 方向**：
+
+1. 启动时从 `graph.json` / `events.jsonl` 恢复状态
+2. 将 `Design.Service` 改为按实例（directory）隔离
+3. 补齐剩余原子工具（update/retire/delete）
+4. 引入 Extension 层原型处理器

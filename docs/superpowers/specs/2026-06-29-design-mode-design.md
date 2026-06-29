@@ -1,7 +1,7 @@
 # OpenCode Design 系统设计规范
 
 **日期**：2026-06-29  
-**状态**：项目启动版 / 第一阶段（Core-only）  
+**状态**：第一阶段已完成 / 已验证（2026-06-30）  
 **目标**：在 OpenCode 容器中新增 Design 模式，作为语义设计推理引擎的原生 Agent。
 
 ---
@@ -321,6 +321,59 @@ packages/opencode/src/session/prompt/design.txt
 | **P4** | Drift/Sync Agent：代码偏差反馈到设计图 |
 | **P5** | 可视化：工作集图谱渲染 |
 | **P6** | Design → Plan → Edit → Feedback 完整闭环 |
+
+---
+
+## 14. 第一阶段完成记录（2026-06-30）
+
+### 14.1 已交付功能
+
+- Core 层图引擎：`Node`、`Edge`、`BoundedContext`、`RelationPrototype`、`WorkingSet`、`EventLog` 全部实现并通过单元测试。
+- 7 个基础 Design 工具：`design_resolve_reference`、`design_create_context`、`design_create_node`、`design_create_edge`、`design_list_nodes`、`design_list_edges`、`design_show_working_set`。
+- Design Agent 注册为原生 primary agent，禁止所有文件/代码/终端工具，只允许 `design_*` 工具和提问。
+- 持久化：`graph.json` 保存当前完整状态，`events.jsonl` 按行追加事件历史。
+
+### 14.2 集成过程中修复的关键问题
+
+| 问题 | 现象 | 根因 | 修复文件 |
+|------|------|------|----------|
+| TUI spinner 崩溃 | `[Reconciler] Unknown component type: spinner` | 单文件编译后 `opentui-spinner/solid` 与 TUI reconciler 引用不同组件注册表实例 | `packages/opencode/src/cli/cmd/run.ts` 改为从 `@opentui/solid` 主包显式 `extend({ spinner: SpinnerRenderable })` |
+| 构建产物模块隔离 | 组件注册重复/失效 | `splitting: true` 把包拆成多个 chunk，导致同一模块多实例 | `packages/opencode/script/build.ts` 设置 `splitting: false` |
+| Design 服务未注入 | TUI 启动但工具调用无实际效果 | `AppLayer` 缺少 `Design.defaultLayer`，`Design.Service` 不在 Effect 上下文中 | `packages/opencode/src/effect/app-runtime.ts` 添加 `Design.defaultLayer` |
+| 状态不持久化 | 工具调用成功但 `.opencode/design` 为空 | `Design` 服务在 mutation 后没有调用 `Persistence.save()` / `appendEvent()` | `packages/opencode/src/design/design.ts` 添加 `persistMutation` 并在每次 mutation 后执行 |
+
+### 14.3 验证结果
+
+测试命令：
+
+```powershell
+D:\RLDemos\OpenCodeDesign\packages\opencode\dist\opencode-windows-x64\bin\opencode.exe --agent design
+```
+
+验证对话：
+
+> 创建一个电商系统设计图。先创建 Context "订单域"，然后创建节点 "订单"、"用户"、"商品"，再创建边把它们连起来。
+
+生成文件：
+
+```
+.opencode/design/
+├── graph.json    # 1 context, 3 nodes, 2 edges
+└── events.jsonl  # 6 events
+```
+
+图结构：
+
+- Context：`订单域`
+- Nodes：`订单`、`用户`、`商品`
+- Edges：`订单 --[aggregate]--> 用户`、`订单 --[aggregate]--> 商品`
+
+### 14.4 已知限制（P2 处理）
+
+- 启动时不会从 `graph.json` / `events.jsonl` 恢复历史状态。
+- `Design.Service` 是全局单例，多项目同时打开时共享同一份图状态。
+- `RelationPrototype` 的显式创建和管理尚未开放为工具。
+- 当前默认使用 `aggregate` 原型，Extension 层尚未实现。
 
 ---
 
