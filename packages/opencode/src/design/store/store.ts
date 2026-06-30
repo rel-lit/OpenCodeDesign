@@ -321,7 +321,7 @@ export const layer = Layer.effect(
         yield* Effect.logInfo(`[DesignStore] initializing store`, { directory: ctx.directory, designDir, dbPath })
         yield* fs.makeDirectory(designDir, { recursive: true }).pipe(Effect.orDie)
         yield* debug(`init start directory=${ctx.directory} dbPath=${dbPath}`)
-        const dbContext = yield* Layer.build(Database.layerFromPath(dbPath))
+        const dbContext = yield* Layer.build(Layer.fresh(Database.layerFromPath(dbPath)))
         yield* debug("Layer.build done")
         const database = Context.get(dbContext, Database.Service)
         yield* debug(`Database.Service obtained`)
