@@ -108,3 +108,112 @@ $ tsgo --noEmit
 ## Issues or concerns
 
 None. The persistence test still exercises real SQLite reload behavior without exposing a mutable module-level handle.
+
+---
+
+# Task 5 Second Fix Report: Quality issues from re-review
+
+## What was fixed
+
+Addressed one Important and two Minor quality issues in `packages/opencode/src/design/design.ts`:
+
+1. **Removed unnecessary `as DesignState` type assertion** (Important)
+   - Location: `packages/opencode/src/design/design.ts:87`
+   - Changed `return { graph, workingSet, eventLog, store } as DesignState` to `return { graph, workingSet, eventLog, store }`.
+   - The object literal already satisfies `DesignState`; the cast only masked potential future type mismatches.
+
+2. **Wrapped `init` in `Effect.fn`** (Minor)
+   - Location: `packages/opencode/src/design/design.ts:179-183`
+   - Changed `const init = () => Effect.gen(function* () { ... })` to `const init = Effect.fn("Design.init")(function* () { ... })`.
+   - Aligns with the project's Effect rules for named/traced effects.
+
+3. **Used `import type` for `Scope`** (Minor)
+   - Location: `packages/opencode/src/design/design.ts:1`
+   - Split `import { Context, Effect, Layer, Scope } from "effect"` into `import { Context, Effect, Layer } from "effect"` and `import type { Scope } from "effect"`.
+   - `Scope` is only used as a type argument to `InstanceState.make`, so it should be a type-only import.
+
+## Files changed
+
+- `packages/opencode/src/design/design.ts`
+- `.superpowers/sdd/task-5-report.md` (this report)
+
+## Test results
+
+```
+bun test test/design/design.test.ts
+bun test v1.3.14 (0d9b296a)
+
+test\design\design.test.ts:
+(pass) Design.Service > persists nodes and edges across reload [82.24ms]
+
+ 1 pass
+ 0 fail
+ 4 expect() calls
+Ran 1 test across 1 file. [2.29s]
+```
+
+## Typecheck results
+
+```
+bun typecheck
+$ tsgo --noEmit
+```
+
+## Issues or concerns
+
+None. All requested quality fixes are applied, tests pass, and typecheck is clean.
+
+---
+
+# Task 5 Third Fix Report: Named effects for public methods
+
+## What was fixed
+
+Addressed the Important observability/style issue found in the final Task 5 re-review for `packages/opencode/src/design/design.ts`:
+
+Public methods and `persistMutation` were anonymous `Effect.gen` blocks. The project's AGENTS.md Effect rules require `Effect.fn("Domain.method")` for named/traced effects.
+
+Wrapped each of the following in `Effect.fn("Design.<name>")`:
+
+- `persistMutation` → `Effect.fn("Design.persistMutation")`
+- `createContext` → `Effect.fn("Design.createContext")`
+- `createNode` → `Effect.fn("Design.createNode")`
+- `createEdge` → `Effect.fn("Design.createEdge")`
+- `resolveReference` → `Effect.fn("Design.resolveReference")`
+- `getState` → `Effect.fn("Design.getState")`
+
+`init` was already wrapped as `Effect.fn("Design.init")` in the previous fix and was left unchanged.
+
+Signatures and behavior are identical; only naming/tracing was added. The closures capturing `use`, `designState`, and `persistMutation` continue to work unchanged.
+
+## Files changed
+
+- `packages/opencode/src/design/design.ts`
+- `.superpowers/sdd/task-5-report.md` (this report)
+
+## Test results
+
+```
+bun test test/design/design.test.ts
+bun test v1.3.14 (0d9b296a)
+
+test\design\design.test.ts:
+(pass) Design.Service > persists nodes and edges across reload [86.68ms]
+
+ 1 pass
+ 0 fail
+ 4 expect() calls
+Ran 1 test across 1 file. [2.64s]
+```
+
+## Typecheck results
+
+```
+bun typecheck
+$ tsgo --noEmit
+(no errors)
+```
+
+## Issues or concerns
+
+None. All public Design methods are now named/traced effects, tests pass, and typecheck is clean.

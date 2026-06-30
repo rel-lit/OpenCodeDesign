@@ -95,7 +95,7 @@ export const layer = Layer.effect(
         return yield* select(state)
       })
 
-    const persistMutation = (event: DesignTypes.EventNode) =>
+    const persistMutation = Effect.fn("Design.persistMutation")((event: DesignTypes.EventNode) =>
       use((state) =>
         state.store.transaction((txStore) =>
           Effect.gen(function* () {
@@ -104,9 +104,10 @@ export const layer = Layer.effect(
             yield* txStore.appendEvent(event)
           }),
         ),
-      )
+      ),
+    )
 
-    const createContext = (input: Parameters<GraphEngine.Interface["createContext"]>[0]) =>
+    const createContext = Effect.fn("Design.createContext")((input: Parameters<GraphEngine.Interface["createContext"]>[0]) =>
       use((state) =>
         Effect.gen(function* () {
           const ctx = yield* state.graph.createContext(input)
@@ -115,9 +116,10 @@ export const layer = Layer.effect(
           yield* persistMutation(event)
           return ctx
         }),
-      )
+      ),
+    )
 
-    const createNode = (input: Parameters<GraphEngine.Interface["createNode"]>[0]) =>
+    const createNode = Effect.fn("Design.createNode")((input: Parameters<GraphEngine.Interface["createNode"]>[0]) =>
       use((state) =>
         Effect.gen(function* () {
           const node = yield* state.graph.createNode(input)
@@ -126,9 +128,10 @@ export const layer = Layer.effect(
           yield* persistMutation(event)
           return node
         }),
-      )
+      ),
+    )
 
-    const createEdge = (input: Parameters<GraphEngine.Interface["createEdge"]>[0]) =>
+    const createEdge = Effect.fn("Design.createEdge")((input: Parameters<GraphEngine.Interface["createEdge"]>[0]) =>
       use((state) =>
         Effect.gen(function* () {
           const edge = yield* state.graph.createEdge(input)
@@ -141,9 +144,10 @@ export const layer = Layer.effect(
           yield* persistMutation(event)
           return edge
         }),
-      )
+      ),
+    )
 
-    const resolveReference = (input: Parameters<WorkingSet.Interface["resolveReference"]>[0]) =>
+    const resolveReference = Effect.fn("Design.resolveReference")((input: Parameters<WorkingSet.Interface["resolveReference"]>[0]) =>
       use((state) =>
         Effect.gen(function* () {
           const result = yield* state.workingSet.resolveReference(input)
@@ -153,9 +157,10 @@ export const layer = Layer.effect(
           }
           return result
         }),
-      )
+      ),
+    )
 
-    const getState = () =>
+    const getState = Effect.fn("Design.getState")(() =>
       use((state) =>
         Effect.gen(function* () {
           const [nodes, edges, prototypes, contexts] = yield* Effect.all([
@@ -175,7 +180,8 @@ export const layer = Layer.effect(
             eventLog: { events },
           }
         }),
-      )
+      ),
+    )
 
     const init = Effect.fn("Design.init")(function* () {
       yield* InstanceState.get(designState)
