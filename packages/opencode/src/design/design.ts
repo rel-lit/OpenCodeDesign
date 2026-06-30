@@ -1,10 +1,11 @@
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, Scope } from "effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { InstanceState } from "@/effect/instance-state"
 import { GraphEngine } from "./core/graph"
 import { WorkingSet } from "./core/working-set"
 import { EventLog } from "./core/event-log"
-import { Persistence } from "./core/persistence"
 import { DesignTypes } from "./core/types"
+import { DesignStore } from "./store/store"
 
 export interface Interface {
   readonly createContext: GraphEngine.Interface["createContext"]
@@ -15,116 +16,196 @@ export interface Interface {
   readonly listEdges: GraphEngine.Interface["listEdges"]
   readonly listWorkingSet: WorkingSet.Interface["list"]
   readonly getState: () => Effect.Effect<DesignTypes.GraphState>
-  readonly save: () => Effect.Effect<void>
-  readonly load: () => Effect.Effect<void>
+  readonly init: () => Effect.Effect<void>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Design") {}
 
+type DesignState = {
+  readonly graph: GraphEngine.Interface
+  readonly workingSet: WorkingSet.Interface
+  readonly eventLog: EventLog.Interface
+  readonly store: DesignStore.Store
+}
+
+export let stateRef: InstanceState.InstanceState<DesignState, never, Scope.Scope> = undefined as unknown as InstanceState.InstanceState<DesignState, never, Scope.Scope>
+
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
-    const graph = yield* GraphEngine.Service
-    const workingSet = yield* WorkingSet.Service
-    const eventLog = yield* EventLog.Service
-    const persistence = yield* Persistence.Service
+    const designStore = yield* DesignStore.Service
 
-    const getState = Effect.fn("Design.getState")(function* () {
-      const [nodes, edges, prototypes, contexts] = yield* Effect.all([
-        graph.listNodes(),
-        graph.listEdges(),
-        graph.listPrototypes(),
-        graph.listContexts(),
-      ])
-      const ws = yield* workingSet.state()
-      const events = yield* eventLog.list()
-      return {
-        nodes,
-        edges,
-        prototypes,
-        contexts,
-        workingSet: ws,
-        eventLog: { events },
-      }
-    })
+    const designState = yield* InstanceState.make<DesignState, never, Scope.Scope>(
+      Effect.fn("Design.state")(function* () {
+        const store = designStore.store
 
-    const save = Effect.fn("Design.save")(function* () {
-      const state = yield* getState()
-      yield* persistence.save(state)
-    })
+        const loaded = yield* store.loadGraphState()
 
-    const load = Effect.fn("Design.load")(function* () {
-      const loaded = yield* persistence.load()
-      if (!loaded) return
-      // In first milestone, loaded state is not restored into in-memory engine.
-      // Restoration will be implemented in P2.
-      yield* Effect.log("Loaded design state (restoration deferred to P2)")
-    })
+        const graph = yield* GraphEngine.makeEngine()
+        const workingSet = yield* WorkingSet.makeWorkingSet(20)(graph)
+        const eventLog = yield* EventLog.makeEventLog()
 
-    const persistMutation = Effect.fn("Design.persistMutation")(function* (event: DesignTypes.EventNode) {
-      yield* persistence.appendEvent(event)
-      yield* save()
-    })
+        if (loaded.nodes.length > 0 || loaded.contexts.length > 0) {
+          for (const ctx of loaded.contexts) {
+            yield* graph.createContext({ id: ctx.id, name: ctx.name, semantics: ctx.semantics })
+          }
+          for (const proto of loaded.prototypes) {
+            yield* graph.createPrototype({
+              id: proto.id,
+              name: proto.name,
+              defaultSemantics: proto.defaultSemantics,
+              parameterSchema: proto.parameterSchema,
+            })
+          }
+          for (const node of loaded.nodes) {
+            yield* graph.createNode({
+              id: node.id,
+              name: node.name,
+              contextId: node.contextId,
+              defaultSemantics: node.defaultSemantics,
+              aliases: [...node.aliases],
+            })
+          }
+          for (const edge of loaded.edges) {
+            yield* graph.createEdge({
+              leftNodeId: edge.leftNodeId,
+              rightNodeId: edge.rightNodeId,
+              prototypeId: edge.prototypeId,
+              parameters: { ...edge.parameters },
+            })
+          }
+          for (const event of loaded.eventLog.events) {
+            yield* eventLog.append({
+              id: event.id,
+              eventType: event.eventType,
+              affectedNodeIds: [...event.affectedNodeIds],
+              affectedEdgeKeys: [...event.affectedEdgeKeys],
+              reason: event.reason,
+              rollbackTarget: event.rollbackTarget,
+            })
+          }
+        }
 
-    return Service.of({
-      createContext: (input) =>
+        return { graph, workingSet, eventLog, store } as DesignState
+      }),
+    )
+
+    stateRef = designState
+
+    const use = <A, E>(select: (state: DesignState) => Effect.Effect<A, E>) =>
+      Effect.gen(function* () {
+        const state = yield* InstanceState.get(designState)
+        return yield* select(state)
+      })
+
+    const persistMutation = (event: DesignTypes.EventNode) =>
+      use((state) =>
+        state.store.transaction((txStore) =>
+          Effect.gen(function* () {
+            const graphState = yield* state.graph.getState()
+            yield* txStore.saveGraphState(graphState)
+            yield* txStore.appendEvent(event)
+          }),
+        ),
+      )
+
+    const createContext = (input: Parameters<GraphEngine.Interface["createContext"]>[0]) =>
+      use((state) =>
         Effect.gen(function* () {
-          const ctx = yield* graph.createContext(input)
-          const event = yield* eventLog.append({ eventType: "context_created", affectedNodeIds: [], affectedEdgeKeys: [] })
-          yield* workingSet.activateContext(ctx.id)
+          const ctx = yield* state.graph.createContext(input)
+          const event = yield* state.eventLog.append({ eventType: "context_created", affectedNodeIds: [], affectedEdgeKeys: [] })
+          yield* state.workingSet.activateContext(ctx.id)
           yield* persistMutation(event)
           return ctx
         }),
-      createNode: (input) =>
+      )
+
+    const createNode = (input: Parameters<GraphEngine.Interface["createNode"]>[0]) =>
+      use((state) =>
         Effect.gen(function* () {
-          const node = yield* graph.createNode(input)
-          const event = yield* eventLog.append({ eventType: "node_created", affectedNodeIds: [node.id] })
-          yield* workingSet.activateNode(node.id)
+          const node = yield* state.graph.createNode(input)
+          const event = yield* state.eventLog.append({ eventType: "node_created", affectedNodeIds: [node.id] })
+          yield* state.workingSet.activateNode(node.id)
           yield* persistMutation(event)
           return node
         }),
-      createEdge: (input) =>
+      )
+
+    const createEdge = (input: Parameters<GraphEngine.Interface["createEdge"]>[0]) =>
+      use((state) =>
         Effect.gen(function* () {
-          const edge = yield* graph.createEdge(input)
-          const event = yield* eventLog.append({
+          const edge = yield* state.graph.createEdge(input)
+          const event = yield* state.eventLog.append({
             eventType: "edge_created",
             affectedNodeIds: [edge.leftNodeId, edge.rightNodeId],
             affectedEdgeKeys: [DesignTypes.edgeKey(edge.leftNodeId, edge.rightNodeId)],
           })
-          yield* Effect.all([workingSet.activateNode(edge.leftNodeId), workingSet.activateNode(edge.rightNodeId)])
+          yield* Effect.all([state.workingSet.activateNode(edge.leftNodeId), state.workingSet.activateNode(edge.rightNodeId)])
           yield* persistMutation(event)
           return edge
         }),
-      resolveReference: (input) =>
+      )
+
+    const resolveReference = (input: Parameters<WorkingSet.Interface["resolveReference"]>[0]) =>
+      use((state) =>
         Effect.gen(function* () {
-          const result = yield* workingSet.resolveReference(input)
+          const result = yield* state.workingSet.resolveReference(input)
           if (result.action === "created") {
-            const event = yield* eventLog.append({ eventType: "node_created", affectedNodeIds: [result.nodeId] })
+            const event = yield* state.eventLog.append({ eventType: "node_created", affectedNodeIds: [result.nodeId] })
             yield* persistMutation(event)
           }
           return result
         }),
-      listNodes: graph.listNodes,
-      listEdges: graph.listEdges,
-      listWorkingSet: workingSet.list,
+      )
+
+    const getState = () =>
+      use((state) =>
+        Effect.gen(function* () {
+          const [nodes, edges, prototypes, contexts] = yield* Effect.all([
+            state.graph.listNodes(),
+            state.graph.listEdges(),
+            state.graph.listPrototypes(),
+            state.graph.listContexts(),
+          ])
+          const ws = yield* state.workingSet.state()
+          const events = yield* state.eventLog.list()
+          return {
+            nodes,
+            edges,
+            prototypes,
+            contexts,
+            workingSet: ws,
+            eventLog: { events },
+          }
+        }),
+      )
+
+    const init = () =>
+      Effect.gen(function* () {
+        yield* InstanceState.get(designState)
+        yield* Effect.logInfo("design state initialized")
+      })
+
+    return Service.of({
+      createContext,
+      createNode,
+      createEdge,
+      resolveReference,
+      listNodes: () => use((state) => state.graph.listNodes()),
+      listEdges: () => use((state) => state.graph.listEdges()),
+      listWorkingSet: () => use((state) => state.workingSet.list()),
       getState,
-      save,
-      load,
+      init,
     })
   }),
 )
 
-export const defaultLayer = layer.pipe(
-  Layer.provide(WorkingSet.defaultLayer),
-  Layer.provide(GraphEngine.defaultLayer),
-  Layer.provide(EventLog.defaultLayer),
-  Layer.provide(Persistence.defaultLayer),
-)
+export const defaultLayer = layer.pipe(Layer.provide(DesignStore.defaultLayer))
 
 export const node = LayerNode.make({
   service: Service,
   layer: defaultLayer,
-  deps: [GraphEngine.node, WorkingSet.node, EventLog.node, Persistence.node],
+  deps: [DesignStore.node],
 })
 
 export * as Design from "./design"
