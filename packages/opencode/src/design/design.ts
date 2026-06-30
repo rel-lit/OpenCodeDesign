@@ -1,4 +1,5 @@
-import { Context, Effect, Layer, Scope } from "effect"
+import { Context, Effect, Layer } from "effect"
+import type { Scope } from "effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { InstanceState } from "@/effect/instance-state"
 import { GraphEngine } from "./core/graph"
@@ -84,7 +85,7 @@ export const layer = Layer.effect(
           }
         }
 
-        return { graph, workingSet, eventLog, store } as DesignState
+        return { graph, workingSet, eventLog, store }
       }),
     )
 
@@ -176,11 +177,10 @@ export const layer = Layer.effect(
         }),
       )
 
-    const init = () =>
-      Effect.gen(function* () {
-        yield* InstanceState.get(designState)
-        yield* Effect.logInfo("design state initialized")
-      })
+    const init = Effect.fn("Design.init")(function* () {
+      yield* InstanceState.get(designState)
+      yield* Effect.logInfo("design state initialized")
+    })
 
     return Service.of({
       createContext,
