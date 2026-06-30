@@ -28,8 +28,6 @@ type DesignState = {
   readonly store: DesignStore.Store
 }
 
-export let stateRef: InstanceState.InstanceState<DesignState, never, Scope.Scope> = undefined as unknown as InstanceState.InstanceState<DesignState, never, Scope.Scope>
-
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -89,8 +87,6 @@ export const layer = Layer.effect(
         return { graph, workingSet, eventLog, store } as DesignState
       }),
     )
-
-    stateRef = designState
 
     const use = <A, E>(select: (state: DesignState) => Effect.Effect<A, E>) =>
       Effect.gen(function* () {

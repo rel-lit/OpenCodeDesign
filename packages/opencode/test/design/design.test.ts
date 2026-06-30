@@ -1,14 +1,16 @@
 import { describe, expect } from "bun:test"
 import { Effect } from "effect"
-import { InstanceState } from "../../src/effect/instance-state"
 import { testEffect } from "../lib/effect"
 import { Design } from "../../src/design/design"
+import { InstanceStore } from "../../src/project/instance-store"
+import { TestInstance } from "../fixture/fixture"
 
 const it = testEffect(Design.defaultLayer)
 
 describe("Design.Service", () => {
   it.instance("persists nodes and edges across reload", () =>
     Effect.gen(function* () {
+      const test = yield* TestInstance
       const design = yield* Design.Service
       yield* design.init()
 
@@ -20,12 +22,13 @@ describe("Design.Service", () => {
       const before = yield* design.listNodes()
       expect(before.length).toBe(2)
 
-      // Simulate reload: invalidate instance state, then re-init
-      yield* InstanceState.invalidate(Design.stateRef)
+      const store = yield* InstanceStore.Service
+      yield* store.reload({ directory: test.directory })
       const reloaded = yield* Design.Service
       yield* reloaded.init()
 
       const after = yield* reloaded.listNodes()
+      expect(after.map((n) => n.id)).toEqual([ship.id, hp.id])
       expect(after.length).toBe(2)
       const edges = yield* reloaded.listEdges()
       expect(edges.length).toBe(1)
