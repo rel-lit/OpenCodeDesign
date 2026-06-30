@@ -1,10 +1,9 @@
 import { Context, Effect, Layer } from "effect"
 import { sql } from "drizzle-orm"
-import { SqlError } from "effect/unstable/sql/SqlError"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Database, type DatabaseShape } from "@opencode-ai/core/database/database"
+import { FSUtil } from "@opencode-ai/core/fs-util"
 import { InstanceState } from "@/effect/instance-state"
-import fs from "fs/promises"
 import path from "path"
 import { DesignTypes } from "../core/types"
 
@@ -14,7 +13,7 @@ export interface Store {
   readonly saveGraphState: (state: Omit<DesignTypes.GraphState, "eventLog" | "workingSet">) => Effect.Effect<void>
   readonly appendEvent: (event: DesignTypes.EventNode) => Effect.Effect<void>
   readonly listEvents: () => Effect.Effect<DesignTypes.EventNode[]>
-  readonly transaction: <A, E, R>(f: (store: Store) => Effect.Effect<A, E, R>) => Effect.Effect<A, E | SqlError, R>
+  readonly transaction: <A, E, R>(f: (store: Store) => Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
 }
 
 export interface Interface {
@@ -85,10 +84,10 @@ const makeStore = (db: DbLike): Store => {
   })
 
   const loadGraphState = Effect.fn("DesignStore.loadGraphState")(function* () {
-    const contexts = yield* all("SELECT * FROM design_contexts")
-    const nodes = yield* all("SELECT * FROM design_nodes")
-    const edges = yield* all("SELECT * FROM design_edges")
-    const prototypes = yield* all("SELECT * FROM design_prototypes")
+    const contexts = (yield* all("SELECT * FROM design_contexts")) as ContextRow[]
+    const nodes = (yield* all("SELECT * FROM design_nodes")) as NodeRow[]
+    const edges = (yield* all("SELECT * FROM design_edges")) as EdgeRow[]
+    const prototypes = (yield* all("SELECT * FROM design_prototypes")) as PrototypeRow[]
     const events = yield* listEvents()
 
     return {
@@ -160,12 +159,12 @@ const makeStore = (db: DbLike): Store => {
   })
 
   const listEvents = Effect.fn("DesignStore.listEvents")(function* () {
-    const rows = yield* all("SELECT * FROM design_events ORDER BY timestamp")
+    const rows = (yield* all("SELECT * FROM design_events ORDER BY timestamp")) as EventRow[]
     return rows.map(rowFromEvent)
   })
 
   const transaction = <A, E, R>(f: (store: Store) => Effect.Effect<A, E, R>) =>
-    db.transaction((tx) => f(makeStore(tx)))
+    db.transaction((tx) => f(makeStore(tx))).pipe(Effect.orDie)
 
   return {
     ensureSchema,
@@ -177,57 +176,103 @@ const makeStore = (db: DbLike): Store => {
   }
 }
 
-const rowFromContext = (row: unknown): DesignTypes.BoundedContext => ({
-  id: (row as any).id,
-  name: (row as any).name,
-  semantics: (row as any).semantics,
-  nodeIds: JSON.parse((row as any).node_ids),
+interface ContextRow {
+  readonly id: string
+  readonly name: string
+  readonly semantics: string
+  readonly node_ids: string
+}
+
+interface NodeRow {
+  readonly id: string
+  readonly name: string
+  readonly aliases: string
+  readonly context_id: string
+  readonly default_semantics: string
+  readonly connected_edges: string
+  readonly created_at: number
+  readonly updated_at: number
+  readonly retired: number
+}
+
+interface EdgeRow {
+  readonly left_node_id: string
+  readonly right_node_id: string
+  readonly prototype_id: string
+  readonly parameters: string
+  readonly created_at: number
+  readonly updated_at: number
+}
+
+interface PrototypeRow {
+  readonly id: string
+  readonly name: string
+  readonly default_semantics: string
+  readonly parameter_schema: string
+}
+
+interface EventRow {
+  readonly id: string
+  readonly name: string
+  readonly event_type: string
+  readonly timestamp: number
+  readonly affected_node_ids: string
+  readonly affected_edge_keys: string
+  readonly rollback_target: string | null
+  readonly reason: string | null
+}
+
+const rowFromContext = (row: ContextRow): DesignTypes.BoundedContext => ({
+  id: row.id,
+  name: row.name,
+  semantics: row.semantics,
+  nodeIds: JSON.parse(row.node_ids),
 })
 
-const rowFromNode = (row: unknown): DesignTypes.Node => ({
-  id: (row as any).id,
-  name: (row as any).name,
-  aliases: JSON.parse((row as any).aliases),
-  contextId: (row as any).context_id,
-  defaultSemantics: (row as any).default_semantics,
-  connectedEdges: JSON.parse((row as any).connected_edges),
-  createdAt: (row as any).created_at,
-  updatedAt: (row as any).updated_at,
-  retired: Boolean((row as any).retired),
+const rowFromNode = (row: NodeRow): DesignTypes.Node => ({
+  id: row.id,
+  name: row.name,
+  aliases: JSON.parse(row.aliases),
+  contextId: row.context_id,
+  defaultSemantics: row.default_semantics,
+  connectedEdges: JSON.parse(row.connected_edges),
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+  retired: Boolean(row.retired),
 })
 
-const rowFromEdge = (row: unknown): DesignTypes.Edge => ({
-  leftNodeId: (row as any).left_node_id,
-  rightNodeId: (row as any).right_node_id,
-  prototypeId: (row as any).prototype_id,
-  parameters: JSON.parse((row as any).parameters),
-  createdAt: (row as any).created_at,
-  updatedAt: (row as any).updated_at,
+const rowFromEdge = (row: EdgeRow): DesignTypes.Edge => ({
+  leftNodeId: row.left_node_id,
+  rightNodeId: row.right_node_id,
+  prototypeId: row.prototype_id,
+  parameters: JSON.parse(row.parameters),
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
 })
 
-const rowFromPrototype = (row: unknown): DesignTypes.RelationPrototype => ({
-  id: (row as any).id,
-  name: (row as any).name,
-  defaultSemantics: (row as any).default_semantics,
-  parameterSchema: JSON.parse((row as any).parameter_schema),
+const rowFromPrototype = (row: PrototypeRow): DesignTypes.RelationPrototype => ({
+  id: row.id,
+  name: row.name,
+  defaultSemantics: row.default_semantics,
+  parameterSchema: JSON.parse(row.parameter_schema),
 })
 
-const rowFromEvent = (row: unknown): DesignTypes.EventNode => ({
-  id: (row as any).id,
-  name: (row as any).name,
+const rowFromEvent = (row: EventRow): DesignTypes.EventNode => ({
+  id: row.id,
+  name: row.name,
   contextId: "event-log",
   aliases: [],
   defaultSemantics: "",
   connectedEdges: [],
-  createdAt: (row as any).timestamp,
-  updatedAt: (row as any).timestamp,
+  createdAt: row.timestamp,
+  updatedAt: row.timestamp,
   retired: false,
-  eventType: (row as any).event_type,
-  timestamp: (row as any).timestamp,
-  affectedNodeIds: JSON.parse((row as any).affected_node_ids),
-  affectedEdgeKeys: JSON.parse((row as any).affected_edge_keys),
-  rollbackTarget: (row as any).rollback_target ?? undefined,
-  reason: (row as any).reason ?? undefined,
+  eventType: row.event_type as DesignTypes.EventType,
+  timestamp: row.timestamp,
+  affectedNodeIds: JSON.parse(row.affected_node_ids),
+  affectedEdgeKeys: JSON.parse(row.affected_edge_keys),
+  rollbackTarget: row.rollback_target ?? undefined,
+  reason: row.reason ?? undefined,
 })
 
 const DESIGN_DIR = ".opencode/design"
@@ -236,10 +281,11 @@ const DESIGN_DB = "design.sqlite"
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
+    const fs = yield* FSUtil.Service
     const state = yield* InstanceState.make<Store>(
       Effect.fn("DesignStore.state")(function* (ctx) {
         const designDir = path.join(ctx.directory, DESIGN_DIR)
-        yield* Effect.promise(() => fs.mkdir(designDir, { recursive: true }))
+        yield* fs.makeDirectory(designDir, { recursive: true }).pipe(Effect.orDie)
         const dbContext = yield* Layer.build(Database.layerFromPath(path.join(designDir, DESIGN_DB)))
         const database = Context.get(dbContext, Database.Service)
         const store = makeStore(database.db)
@@ -279,12 +325,12 @@ export const layer = Layer.effect(
   }),
 )
 
-export const defaultLayer = layer
+export const defaultLayer = layer.pipe(Layer.provide(FSUtil.defaultLayer))
 
 export const node = LayerNode.make({
   service: Service,
   layer: defaultLayer,
-  deps: [Database.node],
+  deps: [Database.node, FSUtil.node],
 })
 
 export * as DesignStore from "./store"
