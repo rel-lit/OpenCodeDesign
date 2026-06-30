@@ -27,4 +27,14 @@ describe("EventLog", () => {
       expect(events[1].eventType).toBe("event_rollback")
     }),
   )
+
+  it.effect("preserves supplied event id", () =>
+    Effect.gen(function* () {
+      const log = yield* EventLog.Service
+      const event = yield* log.append({ id: "restored-123", eventType: "node_created" })
+      expect(event.id).toBe("restored-123")
+      const events = yield* log.list()
+      expect(events[0].id).toBe("restored-123")
+    }),
+  )
 })
