@@ -1,5 +1,7 @@
 # Design 多 Agent 架构设计
 
+> 配套架构图：`2026-07-01-design-multi-agent-architecture-diagram.html`
+
 ## 背景
 
 Design 模式已经从 JSON/JSONL 原型迁移到基于 SQLite 的持久化实现，并具备了完整的图 CRUD 工具集。当前 Design agent 是单一原生主代理，直接操作 `Design.Service` 暴露的工具。
@@ -31,7 +33,7 @@ Design 模式已经从 JSON/JSONL 原型迁移到基于 SQLite 的持久化实�
 ### ChatAgent（Design 主 Agent）
 
 - **唯一与用户对话的 Agent**。
-- 负责理解用户需求、引导设计、整合 SearchAgent 和 GraphAgent 返回的信息。
+- 负责理解用户需求、引导设计、整合 SearchAgent 和 GraphAgent 返回的信息。需要检索时，先向 GraphAgent 请求基于当前活跃工作集的图摘要，再把图摘要和检索需求交给 SearchAgent。
 - 所有图修改请求必须由 ChatAgent 提出，并以**一组操作**为单位经用户显式同意后才能写入数据库。
 - 不直接调用 `Design.Service` 工具；通过调用 GraphAgent 来生成变更提案，由用户在审批面板点击确认后 GraphAgent 执行。
 - 负责把系统预处理后的输入、GraphAgent 的驳回理由和变更提案以可折叠/可展开的形式展示给用户。
@@ -41,7 +43,7 @@ Design 模式已经从 JSON/JSONL 原型迁移到基于 SQLite 的持久化实�
 - **图设计的共享分析引擎**，不直接面对用户。无论输入来自聊天、ChatAgent 的请求还是可视化编辑器保存，GraphAgent 执行的都是同一套设计分析逻辑。
 - 负责：
   1. **设计分析**：检查命名冲突、关系原型使用是否合理、节点所处上下文是否合适、是否遵循设计原则、是否存在可合并的相似节点、是否存在隐含关系、改动后图是否仍然合理等。
-  2. **图转自然语言**：把当前图、参考图或图的某一部分转换为 ChatAgent 易于理解的自然语言摘要（可带结构化标注）。ChatAgent 可以主动向 GraphAgent 请求图信息。
+  2. **图转自然语言**：把当前图、参考图或图的某一部分转换为 ChatAgent 易于理解的自然语言摘要（可带结构化标注）。ChatAgent 可以主动向 GraphAgent 请求基于当前活跃工作集的图摘要。
   3. **输入预处理**：基于设计分析消歧、将图信息转译为自然语言，辅助 ChatAgent 理解用户输入。
   4. **生成变更提案**：接收 ChatAgent 的一组图操作请求，进行设计分析后返回结构化提案。如果发现问题，同时返回驳回理由和可选方案（强制执行、继续沟通、修订冲突）。
   5. **执行写入**：仅在用户在审批面板点击确认（或选择强制执行）后，将批准的整组提案写入数据库。即使是创建一个节点这样的 trivial 操作，只要属于该组，就必须经用户确认。
@@ -50,14 +52,19 @@ Design 模式已经从 JSON/JSONL 原型迁移到基于 SQLite 的持久化实�
 
 ### SearchAgent（子 Agent）
 
-- **信息检索专员**。
+- **信息检索与分析专员**。
 - 权限：项目文件读取、`grep`/`glob`、联网搜索、网页抓取。
 - 触发方式：
   - 进入 Design 模式时，系统自动触发一次项目阅读。
   - ChatAgent 可以显式调用以进行联网搜索或重新阅读项目。
-- 输出：
-  - **图信息**：以宽松格式描述的参考设计（如相似设计方案的概念、节点、关系），交给 GraphAgent 进行对比和图转自然语言处理。
-  - **非图信息**：设计方向文本、参考链接、原始摘要等，直接交给 ChatAgent。
+- 输入：
+  - **当前图摘要**：由 ChatAgent 从 GraphAgent 获取（基于当前活跃工作集）。
+  - **检索需求**：ChatAgent 明确的检索意图（如“寻找类似的聚合关系设计”、“对比项目实现与当前设计”）。
+- 职责：
+  - 根据检索需求搜索互联网和/或项目代码。
+  - 自行完成参考设计与当前图的对比分析。
+  - 收集项目方向、参考信息、相似设计方案等。
+  - 将所有结果总结为自然语言报告交给 ChatAgent。
 - 不直接修改图。
 
 ## 系统层预处理
@@ -70,6 +77,7 @@ Design 模式已经从 JSON/JSONL 原型迁移到基于 SQLite 的持久化实�
    - 对于 ChatAgent 的图操作请求：以 LLM 一次响应中连续调用的多个 `design_*` 工具为一组，为整组操作构建临时工作集。
    - 对于可视化编辑器：以用户一次手动保存产生的完整 diff 为基础构建临时工作集（自动保存不触发）。
 3. **阈值判断**：根据临时工作集大小、输入长度、是否包含图操作关键词等启发式规则，决定是否将输入交给 GraphAgent 预处理。
+4. **处理后输入展示**：无论是否经过 GraphAgent，最终提交给 ChatAgent 的文本都会以可折叠形式展示给用户，让用户知道自己的输入被处理成了什么。
 
 系统层不判断用户意图，不决定是否修改图。
 
@@ -114,7 +122,7 @@ Design 模式已经从 JSON/JSONL 原型迁移到基于 SQLite 的持久化实�
     → 未触发 → ChatAgent
 ```
 
-系统预处理后的版本（包括展开的 @ 引用、临时工作集）以可折叠形式展示给用户，默认折叠。ChatAgent 收到 enriched 输入后，决定如何回应。如需检索，调用 SearchAgent；如需图操作，进入图修改流程。GraphAgent 在预处理阶段同样会进行设计层面的分析，把可能的关系冲突、聚合建议等信息一并呈现给 ChatAgent。
+系统预处理后的版本（包括展开的 @ 引用、临时工作集）以可折叠形式展示给用户，默认折叠。ChatAgent 收到 enriched 输入后，决定如何回应。如需检索，先向 GraphAgent 请求当前图的摘要（基于活跃工作集），再把图摘要和检索需求一起交给 SearchAgent；如需图操作，进入图修改流程。GraphAgent 在预处理阶段同样会进行设计层面的分析，把可能的关系冲突、聚合建议等信息一并呈现给 ChatAgent。
 
 ### 2. 图修改流程（ChatAgent 发起）
 
@@ -157,19 +165,16 @@ GraphAgent 对整组请求进行设计分析（冲突、聚合、上下文合理
 ### 4. 检索流程
 
 ```
-进入 Design 模式
-  → 自动触发 SearchAgent：项目阅读
-    → 图信息交给 GraphAgent
-      → GraphAgent：图转自然语言 + 与当前图对比
-        → 参考设计摘要 / 差异分析 → ChatAgent
-    → 非图信息（方向文本、参考链接）直接 → ChatAgent
-
-ChatAgent 需要时
-  → 显式调用 SearchAgent：联网搜索 / 重新阅读项目
-    → 同上：图信息走 GraphAgent，非图信息直接给 ChatAgent
+进入 Design 模式 或 ChatAgent 需要检索
+  → 向 GraphAgent 请求当前图摘要（基于当前活跃工作集）
+    → SearchAgent 接收 {graphSummary, retrievalRequirements}
+      → SearchAgent：项目阅读 / 联网搜索
+        → SearchAgent 自行完成参考设计与当前图的对比分析
+          → 收集项目方向、参考信息、相似设计方案
+            → 总结报告 → ChatAgent
 ```
 
-SearchAgent 不修改图。图信息必须经过 GraphAgent 转译为自然语言并与当前设计对比后，再交给 ChatAgent。
+SearchAgent 不修改图。它总是带着“当前图长什么样”和“要检索什么”这两个明确输入去工作，避免在未知工作集的情况下进行图对比。
 
 ## 接口约定
 
@@ -224,7 +229,7 @@ SearchAgent 不修改图。图信息必须经过 GraphAgent 转译为自然语�
 
 - 单元测试：系统层阈值判断、临时工作集计算、@ 引用展开。
 - 集成测试：GraphAgent 对 ChatAgent 请求的驳回/执行流程。
-- E2E 测试：可视化编辑器保存 → GraphAgent 分析 → ChatAgent 确认 → 数据库更新。
+- E2E 测试：可视化编辑器手动保存 → 数据库更新 → GraphAgent 分析 → ChatAgent 引导下一轮讨论。
 - 权限测试：SearchAgent 的读写权限边界。
 
 ## 待实现拆分建议
@@ -236,6 +241,7 @@ SearchAgent 不修改图。图信息必须经过 GraphAgent 转译为自然语�
 
 ## 相关文件
 
+- `docs/superpowers/specs/2026-07-01-design-multi-agent-architecture-diagram.html`
 - `packages/opencode/src/design/design.ts`
 - `packages/opencode/src/design/core/types.ts`
 - `packages/opencode/src/agent/agent.ts`
