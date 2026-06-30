@@ -24,11 +24,15 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/De
 
 export type DbLike = Pick<DatabaseShape, "run" | "all" | "transaction">
 
-const makeStore = (db: DbLike): Store => {
+const makeStore = (db: DbLike, logPath?: string): Store => {
   const run = (query: Parameters<DbLike["run"]>[0]) => db.run(query).pipe(Effect.orDie)
   const all = (query: Parameters<DbLike["all"]>[0]) => db.all(query).pipe(Effect.orDie)
 
+  const log = (message: string, meta?: Record<string, unknown>) =>
+    logPath ? Effect.logInfo(`[DesignStore ${logPath}] ${message}`, meta) : Effect.void
+
   const ensureSchema = Effect.fn("DesignStore.ensureSchema")(function* () {
+    yield* log("ensuring schema")
     yield* run(`
       CREATE TABLE IF NOT EXISTS design_contexts (
         id TEXT PRIMARY KEY,
@@ -101,6 +105,12 @@ const makeStore = (db: DbLike): Store => {
   })
 
   const saveGraphState = Effect.fn("DesignStore.saveGraphState")(function* (state) {
+    yield* log("saving graph state", {
+      contexts: state.contexts.length,
+      nodes: state.nodes.length,
+      edges: state.edges.length,
+      prototypes: state.prototypes.length,
+    })
     yield* run(sql`DELETE FROM design_edges`)
     yield* run(sql`DELETE FROM design_nodes`)
     yield* run(sql`DELETE FROM design_contexts`)
@@ -164,7 +174,12 @@ const makeStore = (db: DbLike): Store => {
   })
 
   const transaction = <A, E, R>(f: (store: Store) => Effect.Effect<A, E, R>) =>
-    db.transaction((tx) => f(makeStore(tx))).pipe(Effect.orDie)
+    Effect.gen(function* () {
+      yield* log("transaction begin")
+      const result = yield* db.transaction((tx) => f(makeStore(tx, logPath))).pipe(Effect.orDie)
+      yield* log("transaction committed")
+      return result
+    })
 
   return {
     ensureSchema,
@@ -285,10 +300,12 @@ export const layer = Layer.effect(
     const state = yield* InstanceState.make<Store>(
       Effect.fn("DesignStore.state")(function* (ctx) {
         const designDir = path.join(ctx.directory, DESIGN_DIR)
+        const dbPath = path.join(designDir, DESIGN_DB)
+        yield* Effect.logInfo(`[DesignStore] initializing store`, { directory: ctx.directory, designDir, dbPath })
         yield* fs.makeDirectory(designDir, { recursive: true }).pipe(Effect.orDie)
-        const dbContext = yield* Layer.build(Database.layerFromPath(path.join(designDir, DESIGN_DB)))
+        const dbContext = yield* Layer.build(Database.layerFromPath(dbPath))
         const database = Context.get(dbContext, Database.Service)
-        const store = makeStore(database.db)
+        const store = makeStore(database.db, dbPath)
         yield* store.ensureSchema()
         return store
       }),
