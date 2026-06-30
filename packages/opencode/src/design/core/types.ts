@@ -57,6 +57,7 @@ export const EventType = Schema.Literals([
   "node_created",
   "node_updated",
   "node_retired",
+  "node_unretired",
   "node_deleted",
   "edge_created",
   "edge_updated",

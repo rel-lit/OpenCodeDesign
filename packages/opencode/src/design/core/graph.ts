@@ -29,6 +29,7 @@ export interface Interface {
   }) => Effect.Effect<DesignTypes.BoundedContext>
   readonly getContext: (id: string) => Effect.Effect<DesignTypes.BoundedContext | undefined>
   readonly listContexts: () => Effect.Effect<DesignTypes.BoundedContext[]>
+  readonly updateContext: (id: string, input: Partial<Omit<DesignTypes.BoundedContext, "id">>) => Effect.Effect<DesignTypes.BoundedContext, GraphEngineError>
 
   readonly createPrototype: (input: {
     id?: string
@@ -93,7 +94,12 @@ export const makeEngine = Effect.fn("GraphEngine.make")(function* () {
   const updateNode = Effect.fn("GraphEngine.updateNode")(function* (id, input) {
     const node = state.nodes.find((n) => n.id === id)
     if (!node) return yield* new GraphEngineError({ message: `Node not found: ${id}` })
-    Object.assign(node, input, { updatedAt: now() })
+    if (input.name !== undefined) node.name = input.name
+    if (input.defaultSemantics !== undefined) node.defaultSemantics = input.defaultSemantics
+    if (input.aliases !== undefined) node.aliases = input.aliases
+    if (input.contextId !== undefined) node.contextId = input.contextId
+    if (input.retired !== undefined) node.retired = input.retired
+    node.updatedAt = now()
     return node
   })
 
@@ -150,6 +156,14 @@ export const makeEngine = Effect.fn("GraphEngine.make")(function* () {
 
   const listContexts = Effect.fnUntraced(function* () {
     return [...state.contexts]
+  })
+
+  const updateContext = Effect.fn("GraphEngine.updateContext")(function* (id, input) {
+    const ctx = state.contexts.find((c) => c.id === id)
+    if (!ctx) return yield* new GraphEngineError({ message: `Context not found: ${id}` })
+    if (input.name !== undefined) ctx.name = input.name
+    if (input.semantics !== undefined) ctx.semantics = input.semantics
+    return ctx
   })
 
   const createPrototype = Effect.fn("GraphEngine.createPrototype")(function* (input) {
@@ -264,6 +278,7 @@ export const makeEngine = Effect.fn("GraphEngine.make")(function* () {
     createContext,
     getContext,
     listContexts,
+    updateContext,
     createPrototype,
     getPrototype,
     listPrototypes,
