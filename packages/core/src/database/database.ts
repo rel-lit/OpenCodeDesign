@@ -11,7 +11,7 @@ import { InstallationChannel } from "../installation/version"
 import { makeGlobalNode } from "../effect/app-node"
 
 const makeDatabase = EffectDrizzleSqlite.makeWithDefaults()
-type DatabaseShape = Effect.Success<typeof makeDatabase>
+export type DatabaseShape = Effect.Success<typeof makeDatabase>
 
 export interface Interface {
   db: DatabaseShape
