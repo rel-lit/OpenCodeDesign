@@ -34,4 +34,17 @@ describe("Design.Service", () => {
       expect(edges.length).toBe(1)
     }),
   )
+
+  it.instance("isolates graph state per directory", () =>
+    Effect.gen(function* () {
+      const design = yield* Design.Service
+      yield* design.init()
+
+      const ctx = yield* design.createContext({ name: "DirA" })
+      yield* design.createNode({ name: "NodeA", contextId: ctx.id })
+
+      const nodes = yield* design.listNodes()
+      expect(nodes.length).toBe(1)
+    }),
+  )
 })
