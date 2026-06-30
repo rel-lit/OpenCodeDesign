@@ -24,18 +24,11 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/De
 
 export type DbLike = Pick<DatabaseShape, "run" | "all" | "transaction">
 
-const makeStore = (db: DbLike, logPath?: string, debug?: (message: string) => Effect.Effect<void>): Store => {
+const makeStore = (db: DbLike): Store => {
   const run = (query: Parameters<DbLike["run"]>[0]) => db.run(query).pipe(Effect.orDie)
   const all = (query: Parameters<DbLike["all"]>[0]) => db.all(query).pipe(Effect.orDie)
 
-  const log = (message: string, meta?: Record<string, unknown>) =>
-    Effect.gen(function* () {
-      if (logPath) yield* Effect.logInfo(`[DesignStore ${logPath}] ${message}`, meta)
-      if (debug) yield* debug(message + (meta ? ` ${JSON.stringify(meta)}` : ""))
-    })
-
   const ensureSchema = Effect.fn("DesignStore.ensureSchema")(function* () {
-    yield* log("ensuring schema")
     yield* run(`
       CREATE TABLE IF NOT EXISTS design_contexts (
         id TEXT PRIMARY KEY,
@@ -88,8 +81,6 @@ const makeStore = (db: DbLike, logPath?: string, debug?: (message: string) => Ef
         reason TEXT
       )
     `)
-    const tables = yield* all("SELECT name FROM sqlite_master WHERE type='table'")
-    yield* log("schema tables after ensureSchema", { tables: tables.map((t) => (t as { name: string }).name) })
   })
 
   const loadGraphState = Effect.fn("DesignStore.loadGraphState")(function* () {
@@ -110,12 +101,6 @@ const makeStore = (db: DbLike, logPath?: string, debug?: (message: string) => Ef
   })
 
   const saveGraphState = Effect.fn("DesignStore.saveGraphState")(function* (state) {
-    yield* log("saving graph state", {
-      contexts: state.contexts.length,
-      nodes: state.nodes.length,
-      edges: state.edges.length,
-      prototypes: state.prototypes.length,
-    })
     yield* run(sql`DELETE FROM design_edges`)
     yield* run(sql`DELETE FROM design_nodes`)
     yield* run(sql`DELETE FROM design_contexts`)
@@ -179,12 +164,7 @@ const makeStore = (db: DbLike, logPath?: string, debug?: (message: string) => Ef
   })
 
   const transaction = <A, E, R>(f: (store: Store) => Effect.Effect<A, E, R>) =>
-    Effect.gen(function* () {
-      yield* log("transaction begin")
-      const result = yield* db.transaction((tx) => f(makeStore(tx, logPath, debug))).pipe(Effect.orDie)
-      yield* log("transaction committed")
-      return result
-    })
+    db.transaction((tx) => f(makeStore(tx))).pipe(Effect.orDie)
 
   return {
     ensureSchema,
@@ -298,17 +278,6 @@ const rowFromEvent = (row: EventRow): DesignTypes.EventNode => ({
 const DESIGN_DIR = ".opencode/design"
 const DESIGN_DB = "design.sqlite"
 
-const debugLog = (designDir: string, message: string) =>
-  Effect.tryPromise({
-    try: async () => {
-      const file = Bun.file(path.join(designDir, "debug.log"))
-      const writer = file.writer()
-      await Promise.resolve(writer.write(`${new Date().toISOString()} ${message}\n`))
-      await writer.end()
-    },
-    catch: () => undefined,
-  }).pipe(Effect.ignore)
-
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -316,26 +285,11 @@ export const layer = Layer.effect(
     const state = yield* InstanceState.make<Store>(
       Effect.fn("DesignStore.state")(function* (ctx) {
         const designDir = path.join(ctx.directory, DESIGN_DIR)
-        const dbPath = path.join(designDir, DESIGN_DB)
-        const debug = (message: string) => debugLog(designDir, message)
-        yield* Effect.logInfo(`[DesignStore] initializing store`, { directory: ctx.directory, designDir, dbPath })
         yield* fs.makeDirectory(designDir, { recursive: true }).pipe(Effect.orDie)
-        yield* debug(`init start directory=${ctx.directory} dbPath=${dbPath}`)
-        const dbContext = yield* Layer.build(Layer.fresh(Database.layerFromPath(dbPath)))
-        yield* debug("Layer.build done")
+        const dbContext = yield* Layer.build(Layer.fresh(Database.layerFromPath(path.join(designDir, DESIGN_DB))))
         const database = Context.get(dbContext, Database.Service)
-        yield* debug(`Database.Service obtained`)
-        const store = makeStore(database.db, dbPath, debug)
-        yield* debug("about to ensureSchema")
-        yield* store.ensureSchema().pipe(
-          Effect.catchCause((cause) =>
-            Effect.gen(function* () {
-              yield* debug(`ensureSchema failed: ${String(cause)}`)
-              return yield* Effect.failCause(cause)
-            }),
-          ),
-        )
-        yield* debug("ensureSchema done")
+        const store = makeStore(database.db)
+        yield* store.ensureSchema()
         return store
       }),
     )

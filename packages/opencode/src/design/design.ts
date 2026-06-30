@@ -99,11 +99,9 @@ export const layer = Layer.effect(
       use((state) =>
         state.store.transaction((txStore) =>
           Effect.gen(function* () {
-            yield* Effect.logInfo("[Design] persistMutation start", { eventType: event.eventType })
             const graphState = yield* state.graph.getState()
             yield* txStore.saveGraphState(graphState)
             yield* txStore.appendEvent(event)
-            yield* Effect.logInfo("[Design] persistMutation done", { eventType: event.eventType })
           }),
         ),
       ),
