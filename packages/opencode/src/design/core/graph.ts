@@ -12,6 +12,7 @@ export interface Interface {
     id?: string
     name: string
     contextId: string
+    kind?: string
     defaultSemantics?: string
     aliases?: string[]
   }) => Effect.Effect<DesignTypes.Node>
@@ -79,6 +80,7 @@ export const makeEngine = Effect.fn("GraphEngine.make")(function* () {
       name: input.name,
       aliases: input.aliases ?? [],
       contextId: input.contextId,
+      kind: input.kind ?? "node",
       defaultSemantics: input.defaultSemantics ?? "",
       connectedEdges: [],
       createdAt: now(),

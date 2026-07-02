@@ -22,6 +22,7 @@ describe("DesignStore", () => {
             name: "船",
             aliases: ["战船"],
             contextId: "ctx-1",
+            kind: "entity",
             defaultSemantics: "水上交通工具",
             connectedEdges: [],
             createdAt: 1,

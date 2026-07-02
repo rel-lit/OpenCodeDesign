@@ -67,6 +67,7 @@ describe("GraphAgent execute", () => {
             id: "node-c",
             name: "C",
             contextId: "ctx-core",
+            kind: "node",
             aliases: [],
             defaultSemantics: "",
             connectedEdges: [],

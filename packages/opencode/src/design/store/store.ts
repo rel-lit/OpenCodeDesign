@@ -43,6 +43,7 @@ const makeStore = (db: DbLike): Store => {
         name TEXT NOT NULL,
         aliases TEXT NOT NULL DEFAULT '[]',
         context_id TEXT NOT NULL REFERENCES design_contexts(id),
+        kind TEXT NOT NULL DEFAULT 'node',
         default_semantics TEXT NOT NULL DEFAULT '',
         connected_edges TEXT NOT NULL DEFAULT '[]',
         created_at INTEGER NOT NULL,
@@ -115,12 +116,12 @@ const makeStore = (db: DbLike): Store => {
     for (const node of state.nodes) {
       yield* run(sql`
         INSERT INTO design_nodes (
-          id, name, aliases, context_id, default_semantics, connected_edges,
+          id, name, aliases, context_id, kind, default_semantics, connected_edges,
           created_at, updated_at, retired
         )
         VALUES (
           ${node.id}, ${node.name}, ${JSON.stringify(node.aliases)}, ${node.contextId},
-          ${node.defaultSemantics}, ${JSON.stringify(node.connectedEdges)},
+          ${node.kind}, ${node.defaultSemantics}, ${JSON.stringify(node.connectedEdges)},
           ${node.createdAt}, ${node.updatedAt}, ${node.retired ? 1 : 0}
         )
       `)
@@ -188,6 +189,7 @@ interface NodeRow {
   readonly name: string
   readonly aliases: string
   readonly context_id: string
+  readonly kind: string
   readonly default_semantics: string
   readonly connected_edges: string
   readonly created_at: number
@@ -234,6 +236,7 @@ const rowFromNode = (row: NodeRow): DesignTypes.Node => ({
   name: row.name,
   aliases: JSON.parse(row.aliases),
   contextId: row.context_id,
+  kind: row.kind,
   defaultSemantics: row.default_semantics,
   connectedEdges: JSON.parse(row.connected_edges),
   createdAt: row.created_at,

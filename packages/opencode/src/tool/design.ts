@@ -183,6 +183,7 @@ export const DesignCreateNodeTool = Tool.define<
               id: nodeId,
               name: args.name,
               contextId: args.contextId,
+              kind: "node",
               aliases: args.aliases ? [...args.aliases] : [],
               defaultSemantics: args.defaultSemantics ?? "",
               connectedEdges: [],

@@ -5,6 +5,7 @@ export const Node = Schema.Struct({
   name: Schema.String,
   aliases: Schema.Array(Schema.String),
   contextId: Schema.String,
+  kind: Schema.String,
   defaultSemantics: Schema.String,
   connectedEdges: Schema.Array(Schema.Struct({
     leftNodeId: Schema.String,

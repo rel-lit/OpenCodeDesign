@@ -1,62 +1,50 @@
-# Task 7 Report: Update tools and agent integration
+# Task 7 Report
 
-## What was verified
+## What I implemented
 
-### 1. Tool implementation (`packages/opencode/src/tool/design.ts`)
+Implemented `@` reference expansion in `src/design/system/preprocessor.ts`. The `expandAtReferences` function scans raw user input for `@NodeName` references and expands each matched reference into a node summary containing the node ID, kind, and context name.
 
-- Imports `Design` from `@/design/design` and yields `Design.Service` for each of the 7 tools.
-- All tool definitions use the per-instance `Design.Service` methods:
-  - `design_resolve_reference` → `design.resolveReference`
-  - `design_create_context` → `design.createContext`
-  - `design_create_node` → `design.createNode`
-  - `design_create_edge` → `design.createEdge`
-  - `design_list_nodes` → `design.listNodes`
-  - `design_list_edges` → `design.listEdges`
-  - `design_show_working_set` → `design.listWorkingSet`
-- Verified that `Design.Service` exposes all required methods (`createContext`, `createNode`, `createEdge`, `resolveReference`, `listNodes`, `listEdges`, `listWorkingSet`).
-- No code changes were required.
+The implementation depends on a `kind` field on design nodes. Because `DesignTypes.Node` did not yet expose `kind`, I added it to the schema and propagated it through the minimal necessary surfaces:
 
-### 2. Tool registration (`packages/opencode/src/tool/registry.ts`)
+- `src/design/core/types.ts`: added `kind: Schema.String` to `Node`
+- `src/design/core/graph.ts`: `createNode` accepts optional `kind` and defaults to `"node"`
+- `src/design/store/store.ts`: persisted `kind` in the `design_nodes` table and round-tripped it through `rowFromNode`
+- `src/tool/design.ts` and existing design tests: added `kind` to manually-constructed node objects so typecheck and runtime behavior stay consistent
 
-- All 7 design tools are imported from `./design`.
-- Each tool is yielded and initialized in the registry builder.
-- Each tool is included in the `builtin` tool array returned by `InstanceState.make<State>`.
-- `Design.defaultLayer` is provided in `defaultLayer` and `Design.node` is listed as a dependency in `node`.
-- No code changes were required.
+## What I tested and test results
 
-### 3. Design agent permissions (`packages/opencode/src/agent/agent.ts`)
+- Focused test: `bun test test/design/system/preprocessor.test.ts` — **PASS**
+- Design suite: `bun test test/design/` — **47 pass, 0 fail**
+- Typecheck: `bun run typecheck` — **clean**
 
-- The `design` agent has `mode: "primary"`, `native: true`, and `prompt: PROMPT_DESIGN`.
-- Its permission set denies file/code tools (`read`, `grep`, `glob`, `bash`, `edit`, `write`, `apply_patch`, `task`) and allows all 7 design tools plus `question`.
-- No code changes were required.
+## TDD Evidence
 
-## Test results
-
-```text
-bun test test/tool/design.test.ts
- 4 pass
- 0 fail
- 5 expect() calls
-```
-
-Typecheck also passes:
-
-```text
-bun typecheck
-$ tsgo --noEmit
-```
+1. Wrote the failing test in `test/design/system/preprocessor.test.ts` against a stub `expandAtReferences` that returned the input unchanged.
+2. Ran the test and confirmed it failed with the expected assertion error (`Received: "修改 @UserService 的依赖"`).
+3. Implemented the expansion logic.
+4. Re-ran the test and confirmed it passed.
+5. Ran the full design test suite and typecheck to verify no regressions.
 
 ## Files changed
 
-No source files were modified. This task was purely verification.
+- `src/design/system/preprocessor.ts` (new)
+- `test/design/system/preprocessor.test.ts` (new)
+- `src/design/core/types.ts`
+- `src/design/core/graph.ts`
+- `src/design/store/store.ts`
+- `src/tool/design.ts`
+- `test/design/agent/graph-execute.test.ts`
+- `test/design/agent/graph.test.ts`
+- `test/design/store/store.test.ts`
+- `test/tool/design.test.ts`
 
 ## Self-review findings
 
-- All 7 design tools are registered: **yes**.
-- Design agent permissions are correct: **yes**.
-- Tool tests were run and pass: **yes**.
-- Typecheck passes: **yes**.
+- The preprocessor implementation matches the task brief exactly.
+- The `kind` field addition is a schema change that rippled into storage and a few tests; all call sites were updated and verified.
+- No existing `Design.Service` or SQLite storage behavior was replaced; only extended with the new column.
+- All design tests pass and typecheck is clean.
 
 ## Issues or concerns
 
-None. The per-instance `Design.Service` integration is already complete and working.
+- The task brief only listed creating `src/design/system/preprocessor.ts` and its test, but the brief's implementation references `node.kind`, which did not exist in `DesignTypes.Node`. I had to add `kind` to the node schema and persist it. This is a small but real schema migration concern for existing `design.sqlite` databases that predate this change; the new column is created with `DEFAULT 'node'` in fresh databases, but existing tables will need the column added if backward compatibility is required.

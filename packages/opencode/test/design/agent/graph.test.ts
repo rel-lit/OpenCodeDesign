@@ -23,6 +23,7 @@ const makeSampleInput = (): GraphAgentTypes.Input => ({
       name: "UserService",
       aliases: [],
       contextId: "ctx-core",
+      kind: "service",
       defaultSemantics: "",
       connectedEdges: [],
       createdAt: 0,
