@@ -8,6 +8,7 @@ import { EventLog } from "./core/event-log"
 import { DesignTypes } from "./core/types"
 import { DesignStore } from "./store/store"
 import { GraphAgent } from "./agent/graph"
+import { DesignAgentLlm } from "./agent/llm"
 import * as GraphAgentTypes from "./agent/types"
 import { Preprocessor } from "./system/preprocessor"
 import { WorkingSetComputer } from "./system/working-set-computer"
@@ -42,13 +43,18 @@ export interface Interface {
   readonly listWorkingSet: WorkingSet.Interface["list"]
   readonly getState: () => Effect.Effect<DesignTypes.GraphState>
   readonly init: () => Effect.Effect<void>
-  readonly transaction: <A, E>(effect: Effect.Effect<A, E>) => Effect.Effect<A, E>
+  readonly transaction: <A, E>(
+    f: (txStore: DesignStore.Store) => Effect.Effect<A, E>,
+  ) => Effect.Effect<A, E>
   readonly proposeChanges: (
     delta: GraphAgentTypes.GraphDelta,
     panel?: ApprovalPanel.Interface,
   ) => Effect.Effect<
     GraphAgentTypes.Output,
-    GraphEngine.GraphEngineError | GraphAgent.NoDeltaError | Provider.DefaultModelError
+    | GraphEngine.GraphEngineError
+    | GraphAgent.NoDeltaError
+    | DesignAgentLlm.GenerateObjectError
+    | Provider.DefaultModelError
   >
   readonly preprocessInput: (input: string) => Effect.Effect<
     {
@@ -56,7 +62,7 @@ export interface Interface {
       temporaryWorkingSet: GraphAgentTypes.TemporaryWorkingSet
       enriched?: GraphAgentTypes.Output
     },
-    Provider.DefaultModelError
+    DesignAgentLlm.GenerateObjectError | Provider.DefaultModelError
   >
   readonly handoffToPlan: (input: {
     diffAnalysis: PlanHandoff.PlanHandoffPayload["diffAnalysis"]
@@ -387,8 +393,8 @@ export const layer = (options?: LayerOptions) =>
       ),
     )
 
-    const transaction = <A, E>(effect: Effect.Effect<A, E>) =>
-      use((state) => state.store.transaction(() => effect))
+    const transaction = <A, E>(f: (txStore: DesignStore.Store) => Effect.Effect<A, E>) =>
+      use((state) => state.store.transaction(f))
 
     const handoffToPlan = Effect.fn("Design.handoffToPlan")((input: {
       diffAnalysis: PlanHandoff.PlanHandoffPayload["diffAnalysis"]
@@ -422,6 +428,7 @@ export const layer = (options?: LayerOptions) =>
       use((state) =>
         state.store.transaction((txStore) =>
           Effect.gen(function* () {
+            const events: DesignTypes.EventNode[] = []
             for (const node of delta.addNodes ?? []) {
               yield* state.graph.createNode({
                 id: node.id,
@@ -431,12 +438,21 @@ export const layer = (options?: LayerOptions) =>
                 defaultSemantics: node.defaultSemantics,
                 aliases: [...node.aliases],
               })
+              events.push(
+                yield* state.eventLog.append({ eventType: "node_created", affectedNodeIds: [node.id] }),
+              )
             }
             for (const update of delta.updateNodes ?? []) {
               yield* state.graph.updateNode(update.id, update.patch)
+              events.push(
+                yield* state.eventLog.append({ eventType: "node_updated", affectedNodeIds: [update.id] }),
+              )
             }
             for (const id of delta.deleteNodeIds ?? []) {
               yield* state.graph.deleteNode(id)
+              events.push(
+                yield* state.eventLog.append({ eventType: "node_deleted", affectedNodeIds: [id] }),
+              )
             }
             for (const edge of delta.addEdges ?? []) {
               yield* state.graph.createEdge({
@@ -445,16 +461,40 @@ export const layer = (options?: LayerOptions) =>
                 prototypeId: edge.prototypeId,
                 parameters: { ...edge.parameters },
               })
+              events.push(
+                yield* state.eventLog.append({
+                  eventType: "edge_created",
+                  affectedNodeIds: [edge.leftNodeId, edge.rightNodeId],
+                  affectedEdgeKeys: [DesignTypes.edgeKey(edge.leftNodeId, edge.rightNodeId)],
+                }),
+              )
             }
             for (const update of delta.updateEdges ?? []) {
               yield* state.graph.updateEdge(update.leftNodeId, update.rightNodeId, update.patch)
+              events.push(
+                yield* state.eventLog.append({
+                  eventType: "edge_updated",
+                  affectedNodeIds: [update.leftNodeId, update.rightNodeId],
+                  affectedEdgeKeys: [DesignTypes.edgeKey(update.leftNodeId, update.rightNodeId)],
+                }),
+              )
             }
             for (const key of delta.deleteEdgeKeys ?? []) {
               const [leftNodeId, rightNodeId] = parseEdgeKey(key)
               yield* state.graph.deleteEdge(leftNodeId, rightNodeId)
+              events.push(
+                yield* state.eventLog.append({
+                  eventType: "edge_deleted",
+                  affectedNodeIds: [leftNodeId, rightNodeId],
+                  affectedEdgeKeys: [DesignTypes.edgeKey(leftNodeId, rightNodeId)],
+                }),
+              )
             }
             const graphState = yield* state.graph.getState()
             yield* txStore.saveGraphState(graphState)
+            for (const event of events) {
+              yield* txStore.appendEvent(event)
+            }
           }),
         ),
       ),

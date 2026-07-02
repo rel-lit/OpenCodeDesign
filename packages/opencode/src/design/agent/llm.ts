@@ -4,13 +4,19 @@ import { generateObject } from "ai"
 import { Context, Effect, Layer, Schema } from "effect"
 import type { Decoder } from "effect/Schema"
 
+export class GenerateObjectError extends Schema.TaggedErrorClass<GenerateObjectError>()("DesignAgentLlmGenerateObjectError", {
+  message: Schema.String,
+}) {}
+
 export interface GenerateObjectInput {
   readonly prompt: string
   readonly schema: Schema.Schema<unknown>
 }
 
 export interface Interface {
-  readonly generateObject: (input: GenerateObjectInput) => Effect.Effect<{ object: unknown }, Provider.DefaultModelError>
+  readonly generateObject: (
+    input: GenerateObjectInput,
+  ) => Effect.Effect<{ object: unknown }, GenerateObjectError | Provider.DefaultModelError>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/DesignAgentLlm") {}
@@ -21,8 +27,10 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const provider = yield* Provider.Service
 
-    const generateObjectImpl = Effect.fn("DesignAgentLlm.generateObject")(
-      function* (input: GenerateObjectInput) {
+    const generateObjectImpl = (
+      input: GenerateObjectInput,
+    ): Effect.Effect<{ object: unknown }, GenerateObjectError | Provider.DefaultModelError> =>
+      Effect.gen(function* () {
         const model = yield* provider.defaultModel()
         const resolved = yield* provider.getModel(model.providerID, model.modelID)
         const language = yield* provider.getLanguage(resolved)
@@ -37,10 +45,15 @@ export const layer = Layer.effect(
           temperature: 0.3,
         } satisfies Parameters<typeof generateObject>[0]
 
-        const result = yield* Effect.promise(() => generateObject(params))
+        const result = yield* Effect.tryPromise({
+          try: () => generateObject(params),
+          catch: (error) =>
+            new GenerateObjectError({
+              message: error instanceof Error ? error.message : String(error),
+            }),
+        })
         return { object: result.object }
-      },
-    )
+      })
 
     return Service.of({ generateObject: generateObjectImpl })
   }),

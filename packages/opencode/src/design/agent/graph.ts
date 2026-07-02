@@ -52,7 +52,9 @@ const OutputSchema = Schema.Struct({
 })
 
 export interface Interface {
-  readonly analyze: (input: GraphAgentTypes.Input) => Effect.Effect<GraphAgentTypes.Output, Provider.DefaultModelError>
+  readonly analyze: (
+    input: GraphAgentTypes.Input,
+  ) => Effect.Effect<GraphAgentTypes.Output, DesignAgentLlm.GenerateObjectError | Provider.DefaultModelError>
   readonly execute: (proposal: GraphAgentTypes.Output) => Effect.Effect<GraphAgentTypes.Output, NoDeltaError | GraphEngine.GraphEngineError, Design.Service>
 }
 

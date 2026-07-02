@@ -4,6 +4,7 @@ import { InstanceState } from "@/effect/instance-state"
 import { Design } from "@/design/design"
 import { GraphAgent } from "@/design/agent/graph"
 import { GraphEngine } from "@/design/core/graph"
+import { DesignAgentLlm } from "@/design/agent/llm"
 import * as GraphAgentTypes from "@/design/agent/types"
 import { WorkingSetComputer } from "@/design/system/working-set-computer"
 import { Provider } from "@/provider/provider"
@@ -19,7 +20,10 @@ export class VisualEditorProtocolError extends Schema.TaggedErrorClass<VisualEdi
 export interface Interface {
   readonly save: (delta: GraphAgentTypes.GraphDelta) => Effect.Effect<
     GraphAgentTypes.Output,
-    VisualEditorProtocolError | GraphEngine.GraphEngineError | Provider.DefaultModelError,
+    | VisualEditorProtocolError
+    | GraphEngine.GraphEngineError
+    | DesignAgentLlm.GenerateObjectError
+    | Provider.DefaultModelError,
     Scope.Scope
   >
 }

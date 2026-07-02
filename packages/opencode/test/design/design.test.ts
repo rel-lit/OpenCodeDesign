@@ -99,13 +99,7 @@ describe("Design.Service", () => {
             const design = yield* Design.Service
             const delta = proposal.delta
             if (!delta) return { ...proposal, type: "change-applied" as const }
-            yield* design.transaction(
-              Effect.gen(function* () {
-                for (const update of delta.updateNodes ?? []) {
-                  yield* design.updateNode(update.id, update.patch)
-                }
-              }),
-            )
+            yield* design.applyRawDelta(delta)
             yield* design.bumpVersion("chat-agent")
             return { ...proposal, type: "change-applied" as const }
           }),
@@ -157,13 +151,7 @@ describe("Design.Service", () => {
             const design = yield* Design.Service
             const delta = proposal.delta
             if (!delta) return { ...proposal, type: "change-applied" as const }
-            yield* design.transaction(
-              Effect.gen(function* () {
-                for (const update of delta.updateNodes ?? []) {
-                  yield* design.updateNode(update.id, update.patch)
-                }
-              }),
-            )
+            yield* design.applyRawDelta(delta)
             yield* design.bumpVersion("chat-agent")
             return { ...proposal, type: "change-applied" as const }
           }),

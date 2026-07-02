@@ -2,8 +2,9 @@ import { expect, test } from "bun:test"
 import { NodeFileSystem, NodePath } from "@effect/platform-node"
 import { DesignAgentLlm } from "@/design/agent/llm"
 import { SearchAgent } from "@/design/agent/search"
+import { InstanceRef } from "@/effect/instance-ref"
 import { Effect, FileSystem, Layer, Path } from "effect"
-import { tmpdir } from "../../fixture/fixture"
+import { provideTestInstance, tmpdir } from "../../fixture/fixture"
 
 const mockLlmLayer = Layer.succeed(
   DesignAgentLlm.Service,
@@ -30,26 +31,25 @@ const testLayer = Layer.mergeAll(
 
 test("readProject finds missing PaymentGateway", async () => {
   await using tmp = await tmpdir()
-  const originalCwd = process.cwd()
-  process.chdir(tmp.path)
-  try {
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem
-        const path = yield* Path.Path
-        const servicesDir = path.join(tmp.path, "src/services")
-        yield* fs.makeDirectory(servicesDir, { recursive: true })
-        yield* fs.writeFileString(
-          path.join(servicesDir, "order.ts"),
-          "export class OrderService {\n  place() {}\n}\n",
-        )
-        const sa = yield* SearchAgent.Service
-        const result = yield* sa.readProject("设计包含 OrderService 和 PaymentGateway")
-        expect(result.summaryReport).toBe("Project analysis complete")
-        expect(result.diffAnalysis?.missingInCode.some((m) => m.name === "PaymentGateway")).toBe(true)
-      }).pipe(Effect.provide(testLayer)),
-    )
-  } finally {
-    process.chdir(originalCwd)
-  }
+  const fs = await import("node:fs/promises")
+  const path = await import("node:path")
+  const servicesDir = path.join(tmp.path, "src/services")
+  await fs.mkdir(servicesDir, { recursive: true })
+  await fs.writeFile(
+    path.join(servicesDir, "order.ts"),
+    "export class OrderService {\n  place() {}\n}\n",
+  )
+
+  await provideTestInstance({
+    directory: tmp.path,
+    fn: (ctx) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const sa = yield* SearchAgent.Service
+          const result = yield* sa.readProject("设计包含 OrderService 和 PaymentGateway")
+          expect(result.summaryReport).toBe("Project analysis complete")
+          expect(result.diffAnalysis?.missingInCode.some((m) => m.name === "PaymentGateway")).toBe(true)
+        }).pipe(Effect.provideService(InstanceRef, ctx), Effect.provide(testLayer)),
+      ),
+  })
 })

@@ -1,5 +1,6 @@
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import { NodeFileSystem, NodePath } from "@effect/platform-node"
+import { InstanceState } from "@/effect/instance-state"
 import { Provider } from "@/provider/provider"
 import { Context, Effect, FileSystem, Layer, Path, Schema } from "effect"
 import { DesignAgentLlm } from "./llm"
@@ -23,7 +24,9 @@ export interface Output {
 
 export interface Interface {
   readonly search: (input: Input) => Effect.Effect<Output>
-  readonly readProject: (graphSummary: string) => Effect.Effect<Output, Provider.DefaultModelError, FileSystem.FileSystem | Path.Path>
+  readonly readProject: (
+    graphSummary: string,
+  ) => Effect.Effect<Output, DesignAgentLlm.GenerateObjectError | Provider.DefaultModelError, FileSystem.FileSystem | Path.Path>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/DesignSearchAgent") {}
@@ -83,7 +86,8 @@ export const layer = Layer.effect(
       function* (graphSummary: string) {
         const fs = yield* FileSystem.FileSystem
         const path = yield* Path.Path
-        const servicesDir = path.resolve("src/services")
+        const directory = yield* InstanceState.directory
+        const servicesDir = path.join(directory, "src/services")
         const files = yield* fs.readDirectory(servicesDir).pipe(Effect.orElseSucceed(() => [] as Array<string>))
         const snippets = yield* Effect.forEach(files, (file) =>
           fs.readFileString(path.join(servicesDir, file)).pipe(Effect.orElseSucceed(() => "")),

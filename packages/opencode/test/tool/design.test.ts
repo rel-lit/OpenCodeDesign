@@ -65,40 +65,7 @@ const mockGraphAgentLayer = Layer.succeed(
         const design = yield* Design.Service
         const delta = proposal.delta
         if (!delta) return { ...proposal, type: "change-applied" as const }
-        yield* design.transaction(
-          Effect.gen(function* () {
-            for (const node of delta.addNodes ?? []) {
-              yield* design.createNode({
-                id: node.id,
-                name: node.name,
-                contextId: node.contextId,
-                defaultSemantics: node.defaultSemantics,
-                aliases: [...node.aliases],
-              })
-            }
-            for (const update of delta.updateNodes ?? []) {
-              yield* design.updateNode(update.id, update.patch)
-            }
-            for (const id of delta.deleteNodeIds ?? []) {
-              yield* design.deleteNode(id)
-            }
-            for (const edge of delta.addEdges ?? []) {
-              yield* design.createEdge({
-                leftNodeId: edge.leftNodeId,
-                rightNodeId: edge.rightNodeId,
-                prototypeId: edge.prototypeId,
-                parameters: { ...edge.parameters },
-              })
-            }
-            for (const update of delta.updateEdges ?? []) {
-              yield* design.updateEdge(update.leftNodeId, update.rightNodeId, update.patch)
-            }
-            for (const key of delta.deleteEdgeKeys ?? []) {
-              const [left, right] = key.split("::")
-              if (left && right) yield* design.deleteEdge(left, right)
-            }
-          }),
-        )
+        yield* design.applyRawDelta(delta)
         yield* design.bumpVersion("chat-agent")
         return { ...proposal, type: "change-applied" as const }
       }),

@@ -80,6 +80,42 @@ describe("VisualEditorProtocol", () => {
     }),
   )
 
+  it.instance("save appends audit events to EventLog", () =>
+    Effect.gen(function* () {
+      const design = yield* Design.Service
+      const protocol = yield* VisualEditorProtocol.Service
+      yield* design.init()
+
+      yield* design.createContext({ id: "ctx-audit", name: "Audit" })
+
+      const delta = {
+        addNodes: [
+          {
+            id: "audit-node",
+            name: "AuditNode",
+            contextId: "ctx-audit",
+            kind: "service",
+            defaultSemantics: "",
+            aliases: [],
+            connectedEdges: [],
+            createdAt: 0,
+            updatedAt: 0,
+            retired: false,
+          },
+        ],
+      }
+
+      yield* protocol.save(delta)
+
+      const state = yield* design.getState()
+      const eventTypes = state.eventLog.events.map((event) => event.eventType)
+      expect(eventTypes).toContain("node_created")
+      expect(eventTypes).toContain("graph_version_bumped")
+      const versionEvent = state.eventLog.events.find((event) => event.eventType === "graph_version_bumped")
+      expect(versionEvent?.source).toBe("visual-editor")
+    }),
+  )
+
   test("WorkingSetComputer.fromDelta includes nodes and edges from the delta", () => {
     const graphState: DesignTypes.GraphState = {
       contexts: [{ id: "ctx-core", name: "core", semantics: "", nodeIds: [] }],
