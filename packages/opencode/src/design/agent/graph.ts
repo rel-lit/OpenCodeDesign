@@ -79,45 +79,7 @@ export const layer = Layer.effect(
       function* (proposal: GraphAgentTypes.Output) {
         if (!proposal.delta) return yield* new NoDeltaError()
         const design = yield* Design.Service
-        const delta = proposal.delta
-        const parseEdgeKey = (key: string): [string, string] => {
-          const parts = key.split("::")
-          return [parts[0], parts[1]]
-        }
-        yield* design.transaction(
-          Effect.gen(function* () {
-            for (const node of delta.addNodes ?? []) {
-              yield* design.createNode({
-                id: node.id,
-                name: node.name,
-                contextId: node.contextId,
-                defaultSemantics: node.defaultSemantics,
-                aliases: [...node.aliases],
-              })
-            }
-            for (const update of delta.updateNodes ?? []) {
-              yield* design.updateNode(update.id, update.patch)
-            }
-            for (const id of delta.deleteNodeIds ?? []) {
-              yield* design.deleteNode(id)
-            }
-            for (const edge of delta.addEdges ?? []) {
-              yield* design.createEdge({
-                leftNodeId: edge.leftNodeId,
-                rightNodeId: edge.rightNodeId,
-                prototypeId: edge.prototypeId,
-                parameters: { ...edge.parameters },
-              })
-            }
-            for (const update of delta.updateEdges ?? []) {
-              yield* design.updateEdge(update.leftNodeId, update.rightNodeId, update.patch)
-            }
-            for (const key of delta.deleteEdgeKeys ?? []) {
-              const [leftNodeId, rightNodeId] = parseEdgeKey(key)
-              yield* design.deleteEdge(leftNodeId, rightNodeId)
-            }
-          }),
-        )
+        yield* design.applyRawDelta(proposal.delta)
         yield* design.bumpVersion("chat-agent")
         return { ...proposal, type: "change-applied" as const }
       },

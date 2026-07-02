@@ -97,6 +97,7 @@ export const makeEngine = Effect.fn("GraphEngine.make")(function* () {
     const node = state.nodes.find((n) => n.id === id)
     if (!node) return yield* new GraphEngineError({ message: `Node not found: ${id}` })
     if (input.name !== undefined) node.name = input.name
+    if (input.kind !== undefined) node.kind = input.kind
     if (input.defaultSemantics !== undefined) node.defaultSemantics = input.defaultSemantics
     if (input.aliases !== undefined) node.aliases = input.aliases
     if (input.contextId !== undefined) node.contextId = input.contextId

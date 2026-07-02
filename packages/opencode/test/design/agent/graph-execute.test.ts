@@ -1,8 +1,8 @@
 import { describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
+import { Design } from "@/design/design"
 import { GraphAgent } from "@/design/agent/graph"
 import { DesignAgentLlm } from "@/design/agent/llm"
-import { Design } from "@/design/design"
 import { DesignStore } from "@/design/store/store"
 import { DesignTypes } from "@/design/core/types"
 import * as GraphAgentTypes from "@/design/agent/types"
@@ -146,6 +146,64 @@ describe("GraphAgent execute", () => {
       }).pipe(Effect.flip)
 
       expect(error).toBeInstanceOf(GraphAgent.NoDeltaError)
+    }),
+  )
+
+  it.instance("forwards kind when creating a node", () =>
+    Effect.gen(function* () {
+      const design = yield* Design.Service
+      yield* design.createContext({ id: "ctx-core", name: "Core" })
+
+      const proposal: GraphAgentTypes.Output = {
+        type: "change-proposal",
+        summary: "create node with kind",
+        affectedNodes: ["node-svc"],
+        affectedEdges: [],
+        delta: {
+          addNodes: [{
+            id: "node-svc",
+            name: "UserService",
+            contextId: "ctx-core",
+            kind: "service",
+            aliases: [],
+            defaultSemantics: "",
+            connectedEdges: [],
+            createdAt: 0,
+            updatedAt: 0,
+            retired: false,
+          }],
+        },
+      }
+
+      const ga = yield* GraphAgent.Service
+      const result = yield* ga.execute(proposal)
+
+      expect(result.type).toBe("change-applied")
+      const node = yield* design.getNode("node-svc")
+      expect(node?.kind).toBe("service")
+    }),
+  )
+
+  it.instance("applies kind patch when updating a node", () =>
+    Effect.gen(function* () {
+      const design = yield* Design.Service
+      yield* design.createContext({ id: "ctx-core", name: "Core" })
+      yield* design.createNode({ id: "node-x", name: "X", contextId: "ctx-core" })
+
+      const proposal: GraphAgentTypes.Output = {
+        type: "change-proposal",
+        summary: "update kind",
+        affectedNodes: ["node-x"],
+        affectedEdges: [],
+        delta: { updateNodes: [{ id: "node-x", patch: { kind: "entity" } }] },
+      }
+
+      const ga = yield* GraphAgent.Service
+      const result = yield* ga.execute(proposal)
+
+      expect(result.type).toBe("change-applied")
+      const node = yield* design.getNode("node-x")
+      expect(node?.kind).toBe("entity")
     }),
   )
 })

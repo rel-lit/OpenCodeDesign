@@ -168,3 +168,44 @@ bun run typecheck
 Result: **PASS** (`$ tsgo --noEmit`).
 
 
+
+## Fix 2: Durable Version Sync
+
+Fixed in commit 718591b92. Added graph_version_bumped event type with source tracking, persisted in design_events. Verified: 19 tests pass, typecheck clean.
+
+---
+
+## Fix 3: GraphAgent.execute Kind Forwarding and Delta Deduplication
+
+### What Changed
+
+- `packages/opencode/src/design/agent/graph.ts`:
+  - Replaced the duplicated delta-application loop in `GraphAgent.execute` with a single call to `Design.applyRawDelta(proposal.delta)`.
+  - Removed the now-unused `parseEdgeKey` helper and the `design.transaction` wrapper because `applyRawDelta` already manages its own transaction.
+  - `execute` now forwards all node fields, including `kind`, by relying on `applyRawDelta`.
+
+- `packages/opencode/src/design/core/graph.ts`:
+  - Added `kind` to the fields applied by `GraphEngine.updateNode` so node-update patches can change the kind.
+
+- `packages/opencode/src/design/design.ts`:
+  - No source change was required: `Design.applyRawDelta` already passed `kind` when creating nodes, and node-update patches flow through `GraphEngine.updateNode`, which now applies `kind`.
+
+- `packages/opencode/test/design/agent/graph-execute.test.ts`:
+  - Reordered imports to load `Design` before `GraphAgent`, avoiding a pre-existing circular-dependency TDZ when this test file is evaluated first.
+  - Added `forwards kind when creating a node` to verify that a non-default `kind` survives `GraphAgent.execute`.
+  - Added `applies kind patch when updating a node` to verify that `updateNodes` patches can change `kind`.
+
+### Test Results
+
+```bash
+bun test test/design/agent/graph-execute.test.ts test/design/design.test.ts test/tool/design.test.ts
+```
+
+Result: **22 pass, 0 fail** across 3 files.
+
+```bash
+bun run typecheck
+```
+
+Result: **PASS** (`$ tsgo --noEmit`).
+
