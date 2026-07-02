@@ -14,6 +14,7 @@ import { WorkingSetComputer } from "./system/working-set-computer"
 import { SystemAnalyzer } from "./system/analyzer"
 import { ApprovalPanel } from "./approval-panel"
 import { Provider } from "@/provider/provider"
+import { PlanHandoff } from "./plan-handoff"
 
 export interface Interface {
   readonly createContext: GraphEngine.Interface["createContext"]
@@ -56,6 +57,10 @@ export interface Interface {
     },
     Provider.DefaultModelError
   >
+  readonly handoffToPlan: (input: {
+    diffAnalysis: PlanHandoff.PlanHandoffPayload["diffAnalysis"]
+    designGraphSummary: string
+  }) => Effect.Effect<PlanHandoff.PlanHandoffPayload>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Design") {}
@@ -373,6 +378,11 @@ export const layer = (options?: LayerOptions) =>
     const transaction = <A, E>(effect: Effect.Effect<A, E>) =>
       use((state) => state.store.transaction(() => effect))
 
+    const handoffToPlan = Effect.fn("Design.handoffToPlan")((input: {
+      diffAnalysis: PlanHandoff.PlanHandoffPayload["diffAnalysis"]
+      designGraphSummary: string
+    }) => Effect.succeed(PlanHandoff.build(input)))
+
     let self!: Interface
 
     const proposeChanges = Effect.fn("Design.proposeChanges")(
@@ -445,6 +455,7 @@ export const layer = (options?: LayerOptions) =>
       transaction,
       proposeChanges,
       preprocessInput,
+      handoffToPlan,
     })
 
     return self
