@@ -102,7 +102,7 @@ describe("Multi-agent E2E", () => {
         expect(preprocessed.temporaryWorkingSet.nodeIds).toContain("node-user")
 
         const versionBefore = yield* design.getCurrentVersion()
-        expect(versionBefore.sequence).toBe(2)
+        expect(versionBefore.sequence).toBe(0)
 
         const delta: GraphAgentTypes.GraphDelta = {
           updateNodes: [{ id: "node-user", patch: { name: "UserServiceV2" } }],
@@ -118,7 +118,7 @@ describe("Multi-agent E2E", () => {
         expect(node?.name).toBe("UserServiceV2")
 
         const versionAfter = yield* design.getCurrentVersion()
-        expect(versionAfter.sequence).toBe(versionBefore.sequence + 1)
+        expect(versionAfter.sequence).toBe(1)
       }).pipe(Effect.provide(makeTestLayer(calls)))
     }),
   )

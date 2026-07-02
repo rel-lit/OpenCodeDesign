@@ -209,3 +209,38 @@ bun run typecheck
 
 Result: **PASS** (`$ tsgo --noEmit`).
 
+
+## Fix 3: GraphAgent.execute Kind Forwarding
+
+Fixed in commit 135123b9f. GraphAgent.execute now routes through Design.applyRawDelta; GraphEngine.updateNode applies kind patches. Verified: 22 tests pass, typecheck clean.
+
+---
+
+## Second Final Review Fixes
+
+### What Changed
+
+- `packages/opencode/test/design/e2e/multi-agent.test.ts`:
+  - Updated durable version-sync expectations: `versionBefore.sequence` is now `0` (only `graph_version_bumped` events count), and `versionAfter.sequence` is expected to be `1` after the proposal executes.
+
+- `packages/opencode/src/design/design.ts`:
+  - When reloading persisted nodes, `graph.createNode` now forwards `kind: node.kind` so non-default node kinds survive restart.
+
+- `packages/opencode/src/design/store/store.ts`:
+  - Added an `ALTER TABLE` migration for `design_nodes.kind` using the existing `PRAGMA table_info` / `ALTER TABLE` pattern, so databases created before this branch gain the `kind` column.
+
+### Test Results
+
+```bash
+bun test test/design/e2e/multi-agent.test.ts test/design/design.test.ts test/design/store/store.test.ts
+```
+
+Result: **10 pass, 0 fail** across 3 files.
+
+```bash
+bun run typecheck
+```
+
+Result: **PASS** (`$ tsgo --noEmit`).
+
+

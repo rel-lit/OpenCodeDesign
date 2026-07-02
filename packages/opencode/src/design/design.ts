@@ -121,6 +121,7 @@ export const layer = (options?: LayerOptions) =>
               id: node.id,
               name: node.name,
               contextId: node.contextId,
+              kind: node.kind,
               defaultSemantics: node.defaultSemantics,
               aliases: [...node.aliases],
             })

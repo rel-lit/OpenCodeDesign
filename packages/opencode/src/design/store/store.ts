@@ -51,6 +51,11 @@ const makeStore = (db: DbLike): Store => {
         retired INTEGER NOT NULL DEFAULT 0
       )
     `)
+
+    const nodeColumns = (yield* all(sql`PRAGMA table_info(design_nodes)`)) as Array<{ name: string }>
+    if (!nodeColumns.some((c) => c.name === "kind")) {
+      yield* run(sql`ALTER TABLE design_nodes ADD COLUMN kind TEXT NOT NULL DEFAULT 'node'`)
+    }
     yield* run(`
       CREATE TABLE IF NOT EXISTS design_edges (
         left_node_id TEXT NOT NULL,
