@@ -39,6 +39,7 @@ flowchart TB
 
     CA -->|"graphSummary + retrievalRequirements"| SA
     SA -->|总结报告| CA
+    SA -->|差异分析| Plan[Plan / Edit 模式]
 
     CA -->|"一组 design_* 操作请求"| GA
     GA -->|变更提案| AP
@@ -105,7 +106,7 @@ flowchart LR
     GA -->|改动分析| CA
     CA -->|引导下一轮设计| U
   </div>
-  <p class="note">手动保存动作本身即视为用户同意。自动保存不触发 Agent 流程。</p>
+  <p class="note">手动保存动作本身即视为用户同意。可视化编辑器不实现自动保存。</p>
 
   <h2>5. 检索流程</h2>
   <div class="mermaid">
