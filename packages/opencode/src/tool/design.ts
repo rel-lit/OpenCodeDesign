@@ -703,7 +703,7 @@ export const DesignGetStateTool = Tool.define<
           const state = yield* design.getState()
           return {
             title: "Design state",
-            output: `Contexts: ${state.contexts.length}\nNodes: ${state.nodes.length}\nEdges: ${state.edges.length}\nPrototypes: ${state.prototypes.length}\nEvents: ${state.eventLog.events.length}`,
+            output: `Contexts: ${state.contexts.length}\nNodes: ${state.nodes.length}\nEdges: ${state.edges.length}\nPrototypes: ${state.prototypes.length}\nEvents: ${state.eventLog?.events.length ?? 0}`,
             metadata: { state },
           }
         }).pipe(Effect.orDie),

@@ -88,7 +88,7 @@ export const layer = Layer.effect(
               parameters: { ...edge.parameters },
             })
           }
-          for (const event of loaded.eventLog.events) {
+          for (const event of loaded.eventLog?.events ?? []) {
             yield* eventLog.append({
               id: event.id,
               eventType: event.eventType,

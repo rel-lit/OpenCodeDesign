@@ -104,8 +104,8 @@ export const GraphState = Schema.Struct({
   edges: Schema.Array(Edge),
   prototypes: Schema.Array(RelationPrototype),
   contexts: Schema.Array(BoundedContext),
-  workingSet: WorkingSet,
-  eventLog: EventLog,
+  workingSet: Schema.optional(WorkingSet),
+  eventLog: Schema.optional(EventLog),
 })
 export type GraphState = Schema.Schema.Type<typeof GraphState>
 
