@@ -1,130 +1,107 @@
-### Task 11: Add missing coverage tests
+# Task 11: 定义 SearchAgent 类型与服务
 
 **Files:**
-- Modify: `packages/opencode/test/design/store/store.test.ts`
-- Modify: `packages/opencode/test/design/design.test.ts`
+- Create: `src/design/agent/search.ts`
+- Create: `src/design/agent/prompt/search.txt`
+- Modify: `src/agent/agent.ts`
+- Test: `test/design/agent/search.test.ts`
 
-**Why:** The subagent review identified several gaps that should be covered by tests before the milestone is considered complete.
+**Interfaces:**
+- Consumes: `graphSummary`, `retrievalRequirements`
+- Produces: `summaryReport`, `diffAnalysis`, `nonGraphInfo`
 
-- [ ] **Step 1: Add per-instance isolation test for `DesignStore`**
-
-In `packages/opencode/test/design/store/store.test.ts`, add:
-
-```typescript
-it.instance("isolates state between instances", () =>
-  Effect.gen(function* () {
-    const designStore = yield* DesignStore.Service
-    const store = designStore.store
-    yield* store.saveGraphState({
-      contexts: [{ id: "ctx-a", name: "A", semantics: "", nodeIds: [] }],
-      nodes: [],
-      edges: [],
-      prototypes: [],
-    })
-
-    // This test runs inside a single temp directory; real multi-directory
-    // isolation is exercised by the Design.Service integration test below.
-    const loaded = yield* store.loadGraphState()
-    expect(loaded.contexts).toHaveLength(1)
-    expect(loaded.contexts[0].name).toBe("A")
-  }),
-)
-```
-
-- [ ] **Step 2: Add transaction failure test**
-
-Add `import { Exit } from "effect"` at the top of `packages/opencode/test/design/store/store.test.ts`, then add:
+- [ ] **Step 1: Write the failing test**
 
 ```typescript
-it.instance("Leaves prior state intact on transaction failure", () =>
-  Effect.gen(function* () {
-    const designStore = yield* DesignStore.Service
-    const store = designStore.store
+import { SearchAgent } from "@/design/agent/search"
 
-    yield* store.saveGraphState({
-      contexts: [{ id: "ctx-stable", name: "Stable", semantics: "", nodeIds: [] }],
-      nodes: [],
-      edges: [],
-      prototypes: [],
-    })
-
-    const failure = store.transaction((tx) =>
-      Effect.gen(function* () {
-        yield* tx.saveGraphState({
-          contexts: [{ id: "ctx-new", name: "New", semantics: "", nodeIds: [] }],
-          nodes: [],
-          edges: [],
-          prototypes: [],
-        })
-        return yield* Effect.fail(new Error("simulated failure"))
-      }),
-    )
-
-    const exit = yield* Effect.exit(failure)
-    expect(Exit.isFailure(exit)).toBe(true)
-
-    const loaded = yield* store.loadGraphState()
-    expect(loaded.contexts).toHaveLength(1)
-    expect(loaded.contexts[0].name).toBe("Stable")
-  }),
-)
+test("search agent returns summary report", async () => {
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      const sa = yield* SearchAgent.Service
+      return yield* sa.search({
+        graphSummary: "设计包含 UserService 和 OrderService",
+        retrievalRequirements: "对比项目实现",
+      })
+    }).pipe(Effect.provide(/* mock layer */))
+  )
+  expect(result.summaryReport).toBeTruthy()
+})
 ```
 
-- [ ] **Step 3: Add directory creation test**
-
-Add `import path from "path"` at the top of `packages/opencode/test/design/store/store.test.ts`, then add:
+- [ ] **Step 2: Implement SearchAgent skeleton**
 
 ```typescript
-it.instance("creates the design directory and sqlite file", () =>
-  Effect.gen(function* () {
-    const test = yield* TestInstance
-    const expectedFile = path.join(test.directory, ".opencode/design/design.sqlite")
-    const designStore = yield* DesignStore.Service
-    const store = designStore.store
-    yield* store.ensureSchema()
+// src/design/agent/search.ts
+import { Context, Effect } from "effect"
+import { serviceUse } from "@opencode-ai/core/effect/service-use"
+import PROMPT_SEARCH from "./prompt/search.txt"
 
-    const exists = yield* Effect.promise(() => Bun.file(expectedFile).exists())
-    expect(exists).toBe(true)
-  }),
-)
+export interface Input {
+  graphSummary: string
+  retrievalRequirements: string
+  focus?: { contextIds?: string[]; nodeIds?: string[] }
+}
+
+export interface Output {
+  summaryReport: string
+  diffAnalysis?: {
+    missingInCode: Array<{ nodeId?: string; name: string; reason: string }>
+    divergentRelations: Array<{ designEdge?: string; actualCode: string; reason: string }>
+    references: Array<{ file: string; line?: number; snippet: string }>
+  }
+  nonGraphInfo?: Array<{ type: "text" | "link"; content: string }>
+}
+
+export interface Interface {
+  readonly search: (input: Input) => Effect.Effect<Output>
+  readonly readProject: (graphSummary: string) => Effect.Effect<Output>
+}
+
+export class Service extends Context.Service<Service, Interface>()("@opencode/DesignSearchAgent") {}
+export const use = serviceUse(Service)
+
+export const layer = Effect.gen(function* () {
+  const search = Effect.fn("SearchAgent.search")(
+    (input: Input): Effect.Effect<Output> => {
+      return Effect.succeed({
+        summaryReport: `Search result for: ${input.retrievalRequirements}`,
+      })
+    }
+  )
+  const readProject = Effect.fn("SearchAgent.readProject")(
+    (graphSummary: string): Effect.Effect<Output> => {
+      return Effect.succeed({ summaryReport: "Project read placeholder" })
+    }
+  )
+  return { search, readProject }
+}).pipe(Effect.map(Service.make))
+
+export * as SearchAgent from "./search"
 ```
 
-- [ ] **Step 4: Add per-instance isolation test for `Design.Service`**
+- [ ] **Step 3: Register SearchAgent as subagent**
 
-In `packages/opencode/test/design/design.test.ts`, add:
+在 `src/agent/agent.ts` 中注册 `design-search`。
 
-```typescript
-it.instance("isolates graph state per directory", () =>
-  Effect.gen(function* () {
-    const design = yield* Design.Service
-    yield* design.init()
+- [ ] **Step 4: Run test to verify it passes**
 
-    const ctx = yield* design.createContext({ name: "DirA" })
-    yield* design.createNode({ name: "NodeA", contextId: ctx.id })
+Run: `bun test test/design/agent/search.test.ts`
+Expected: PASS
 
-    const nodes = yield* design.listNodes()
-    expect(nodes.length).toBe(1)
-
-    // Actual cross-directory isolation is enforced by InstanceState; this test
-    // verifies the service is bound to the current instance context.
-  }),
-)
-```
-
-- [ ] **Step 5: Run the updated test suites**
+- [ ] **Step 5: Commit**
 
 ```bash
-cd packages/opencode
-bun test test/design
+git commit -m "feat(design): add SearchAgent service skeleton and register as subagent"
 ```
 
-Expected: all tests pass.
+## Global Constraints
 
-- [ ] **Step 6: Commit**
-
-```bash
-git add packages/opencode/test/design
-git commit -m "test(design): add per-instance and transaction coverage"
-```
-
----
+- 仅面向 Windows 桌面端 GUI；CLI 与 Web 不在范围内。
+- 不替换现有 `Design.Service` 和 SQLite 存储层。
+- 使用 Effect `Effect.gen` 和 `Effect.fn`；遵循 `src/effect/instance-state.ts` 进行 per-project 状态隔离。
+- 模块组织使用 flat top-level exports + `export * as Namespace from "./file"`；禁止使用 `export namespace Foo`。
+- 字段/列名使用 snake_case。
+- 避免 `try`/`catch`，优先使用 Effect 错误通道。
+- 测试从 `packages/opencode` 目录运行；不使用 root 运行测试。
+- 类型检查使用 `bun run typecheck` from `packages/opencode`。

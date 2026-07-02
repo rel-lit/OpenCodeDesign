@@ -1,101 +1,66 @@
-### Task 7: Update tools and agent integration
+# Task 7: 实现 @ 引用展开
 
 **Files:**
-- Modify: `packages/opencode/src/tool/design.ts`
-- Verify: `packages/opencode/src/tool/registry.ts`
-- Verify: `packages/opencode/src/agent/agent.ts`
+- Create: `src/design/system/preprocessor.ts`
+- Test: `test/design/system/preprocessor.test.ts`
 
 **Interfaces:**
-- Consumes: `Design.Service`.
-- Produces: same 7 `design_*` tools, now operating on per-instance state.
+- Consumes: raw user input string, current graph state
+- Produces: input with `@` references expanded
 
-**Why:** Tools should require zero changes except that `Design.Service` is now per-instance. This task is mostly verification.
-
-- [ ] **Step 1: Update tool imports if necessary**
-
-`packages/opencode/src/tool/design.ts` already imports `Design` from `@/design/design` and yields `Design.Service`. No changes should be needed. If `Design.Service` interface lost any methods used by tools, restore them.
-
-- [ ] **Step 2: Verify tool registration**
-
-In `packages/opencode/src/tool/registry.ts`, confirm the 7 Design tools are registered and exported. If not, add them:
+- [ ] **Step 1: Write the failing test**
 
 ```typescript
-import {
-  DesignCreateContextTool,
-  DesignCreateEdgeTool,
-  DesignCreateNodeTool,
-  DesignListEdgesTool,
-  DesignListNodesTool,
-  DesignResolveReferenceTool,
-  DesignShowWorkingSetTool,
-} from "./design"
-
-// ... inside registry builder
-DesignCreateContextTool,
-DesignCreateEdgeTool,
-DesignCreateNodeTool,
-DesignListEdgesTool,
-DesignListNodesTool,
-DesignResolveReferenceTool,
-DesignShowWorkingSetTool,
+test("expands @UserService to node summary", () => {
+  const graphState = {
+    nodes: [{ id: "node-5", name: "UserService", contextId: "ctx-core", kind: "service" }],
+    contexts: [{ id: "ctx-core", name: "core" }],
+    edges: [],
+    prototypes: [],
+  }
+  const result = expandAtReferences("修改 @UserService 的依赖", graphState)
+  expect(result).toContain("UserService（节点 ID: node-5")
+})
 ```
 
-- [ ] **Step 3: Verify Design agent permissions**
-
-In `packages/opencode/src/agent/agent.ts`, confirm the `design` agent has:
+- [ ] **Step 2: Implement expansion**
 
 ```typescript
-permission: Permission.merge(
-  defaults,
-  Permission.fromConfig({
-    question: "allow",
-    read: "deny",
-    grep: "deny",
-    glob: "deny",
-    bash: "deny",
-    edit: "deny",
-    write: "deny",
-    apply_patch: "deny",
-    task: "deny",
-    design_resolve_reference: "allow",
-    design_create_context: "allow",
-    design_create_node: "allow",
-    design_create_edge: "allow",
-    design_list_nodes: "allow",
-    design_list_edges: "allow",
-    design_show_working_set: "allow",
-  }),
-  user,
-),
-mode: "primary",
-native: true,
-prompt: PROMPT_DESIGN,
+// src/design/system/preprocessor.ts
+export const expandAtReferences = (input: string, graphState: DesignTypes.GraphState): string => {
+  const pattern = /@([A-Za-z0-9_]+)/g
+  return input.replace(pattern, (match, name) => {
+    const node = graphState.nodes.find((n) => n.name === name)
+    if (!node) return match
+    const ctx = graphState.contexts.find((c) => c.id === node.contextId)
+    return `${match}（节点 ID: ${node.id}，类型: ${node.kind}，上下文: ${ctx?.name ?? node.contextId}）`
+  })
+}
+
+export * as Preprocessor from "./preprocessor"
 ```
 
-No changes should be needed.
+- [ ] **Step 3: Run test to verify it passes**
 
-- [ ] **Step 4: Run tool tests**
+Run: `bun test test/design/system/preprocessor.test.ts`
+Expected: PASS
+
+- [ ] **Step 4: Commit**
 
 ```bash
-cd packages/opencode
-bun test test/tool/design.test.ts
+git add src/design/system/preprocessor.ts test/design/system/preprocessor.test.ts
+git commit -m "feat(design): implement @ reference expansion"
 ```
 
-Expected: tests pass.
+## Global Constraints
 
-- [ ] **Step 5: Commit**
+- 仅面向 Windows 桌面端 GUI；CLI 与 Web 不在范围内。
+- 不替换现有 `Design.Service` 和 SQLite 存储层。
+- 模块组织使用 flat top-level exports + `export * as Namespace from "./file"`；禁止使用 `export namespace Foo`。
+- 字段/列名使用 snake_case。
+- 测试从 `packages/opencode` 目录运行；不使用 root 运行测试。
+- 类型检查使用 `bun run typecheck` from `packages/opencode`。
 
-If no changes were required:
+## Dependencies from Previous Tasks
 
-```bash
-git commit --allow-empty -m "chore(design): verify tool and agent integration"
-```
-
-If changes were required:
-
-```bash
-git add packages/opencode/src/tool/design.ts packages/opencode/src/tool/registry.ts packages/opencode/src/agent/agent.ts
-git commit -m "chore(design): verify tool and agent integration"
-```
-
----
+- `DesignTypes.GraphState` in `src/design/core/types.ts`

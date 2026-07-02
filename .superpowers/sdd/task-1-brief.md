@@ -1,123 +1,147 @@
-### Task 1: Refactor `GraphEngine` into a reusable factory
+# Task 1: 定义 GraphAgent 核心类型与接口
 
 **Files:**
-- Modify: `packages/opencode/src/design/core/graph.ts`
+- Create: `src/design/agent/types.ts`
+- Modify: `src/design/core/types.ts`（如需补充字段）
+- Test: `test/design/agent/types.test.ts`
 
 **Interfaces:**
-- Consumes: nothing (pure in-memory graph logic).
-- Produces: exported `makeEngine` factory returning `Effect.Effect<GraphEngine.Interface>`; `GraphEngine.Service` becomes a global wrapper that delegates to a single internal engine instance.
+- Consumes: `DesignTypes.GraphState`, `DesignTypes.Node`, `DesignTypes.Edge` from `src/design/core/types.ts`
+- Produces: `GraphAgent.Input`, `GraphAgent.Output`, `GraphDelta` 类型
 
-**Why:** `Design.Service` must own a private `GraphEngine` instance per project. Extracting a factory lets both the legacy global service and the new per-instance `Design.Service` share the same implementation without either knowing about SQLite.
-
-- [ ] **Step 1: Extract factory from current implementation**
-
-Replace the inline mutable state and method definitions with an exported `makeEngine` function that returns an object matching `GraphEngine.Interface`.
-
-First update `GraphEngine.Interface` to accept an optional `id` in `createNode` and expose `getState`:
+- [ ] **Step 1: Write the failing test**
 
 ```typescript
-export interface Interface {
-  readonly createNode: (input: {
-    id?: string
-    name: string
-    contextId: string
-    defaultSemantics?: string
-    aliases?: string[]
-  }) => Effect.Effect<DesignTypes.Node>
-  // ... existing methods ...
-  readonly getState: () => Effect.Effect<{
-    nodes: DesignTypes.Node[]
-    edges: DesignTypes.Edge[]
-    prototypes: DesignTypes.RelationPrototype[]
-    contexts: DesignTypes.BoundedContext[]
-  }>
-}
-```
+import { describe, expect, test } from "bun:test"
+import { GraphAgent } from "@/design/agent/types"
 
-Then extract the factory:
-
-```typescript
-export const makeEngine = Effect.fn("GraphEngine.make")(function* () {
-  let state: MutableState = {
-    nodes: [],
-    edges: [],
-    prototypes: [],
-    contexts: [],
-    workingSet: { activeContextIds: [], activeNodeIds: [], capacity: 20 },
-    eventLog: { events: [] },
-  }
-
-  const now = () => Date.now()
-
-  // Move createNode, getNode, listNodes, findNodesByName,
-  // createContext, getContext, listContexts,
-  // createPrototype, getPrototype, listPrototypes,
-  // createEdge, updateEdge, deleteEdge, getEdge, listEdges, listEdgesForNode
-  // here as local functions, exactly as they are today, operating on `state`.
-
-  const getState = Effect.fnUntraced(function* () {
-    return {
-      nodes: [...state.nodes],
-      edges: [...state.edges],
-      prototypes: [...state.prototypes],
-      contexts: [...state.contexts],
+describe("GraphAgent types", () => {
+  test("input schema accepts chat source with proposed change", () => {
+    const input: GraphAgent.Input = {
+      source: "chat",
+      userInput: "rename UserService",
+      temporaryWorkingSet: {
+        contextIds: ["ctx-core"],
+        nodeIds: ["node-5"],
+        edgeKeys: [],
+        systemAnalysis: {
+          conflictingRelations: [],
+          duplicateNodeCandidates: [],
+          orphanNodes: [],
+          invalidPrototypeUsage: [],
+        },
+        expandedByGraphAgent: {
+          contextIds: [],
+          nodeIds: [],
+          edgeKeys: [],
+          reason: "",
+        },
+      },
+      activeWorkingSet: { contextIds: ["ctx-core"], nodeIds: ["node-5"], capacity: 10 },
+      graphState: { contexts: [], nodes: [], edges: [], prototypes: [] },
+      proposedChange: {
+        updateNodes: [{ id: "node-5", patch: { name: "UserServiceV2" } }],
+      },
+      knownVersion: 1,
     }
+    expect(input.source).toBe("chat")
   })
-
-  return {
-    createNode,
-    updateNode,
-    retireNode,
-    deleteNode,
-    getNode,
-    listNodes,
-    findNodesByName,
-    createContext,
-    getContext,
-    listContexts,
-    createPrototype,
-    getPrototype,
-    listPrototypes,
-    createEdge,
-    updateEdge,
-    deleteEdge,
-    getEdge,
-    listEdges,
-    listEdgesForNode,
-    getState,
-  } satisfies GraphEngine.Interface
 })
 ```
 
-- [ ] **Step 2: Rewrite `GraphEngine.Service` as a global wrapper over the factory**
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `bun test test/design/agent/types.test.ts`
+Expected: FAIL with module not found or type not found.
+
+- [ ] **Step 3: Implement minimal types**
 
 ```typescript
-export const layer = Layer.effect(
-  Service,
-  Effect.gen(function* () {
-    const engine = yield* makeEngine
-    return Service.of(engine)
-  }),
-)
+// src/design/agent/types.ts
+import { DesignTypes } from "@/design/core/types"
+
+export interface TemporaryWorkingSet {
+  contextIds: string[]
+  nodeIds: string[]
+  edgeKeys: string[]
+  systemAnalysis: {
+    conflictingRelations: Array<{
+      edgeKey: string
+      reason: string
+      severity: "error" | "warning"
+    }>
+    duplicateNodeCandidates: Array<{ nodeIds: string[]; similarityScore: number }>
+    orphanNodes: string[]
+    invalidPrototypeUsage: Array<{ edgeKey: string; prototypeId: string; reason: string }>
+  }
+  expandedByGraphAgent: {
+    contextIds: string[]
+    nodeIds: string[]
+    edgeKeys: string[]
+    reason: string
+  }
+}
+
+export interface ActiveWorkingSet {
+  contextIds: string[]
+  nodeIds: string[]
+  capacity: number
+}
+
+export interface GraphDelta {
+  addNodes?: DesignTypes.Node[]
+  updateNodes?: Array<{ id: string; patch: Partial<DesignTypes.Node> }>
+  deleteNodeIds?: string[]
+  addEdges?: DesignTypes.Edge[]
+  updateEdges?: Array<{ leftNodeId: string; rightNodeId: string; patch: Partial<DesignTypes.Edge> }>
+  deleteEdgeKeys?: string[]
+}
+
+export interface Input {
+  source: "chat" | "visual-editor"
+  userInput: string
+  temporaryWorkingSet: TemporaryWorkingSet
+  activeWorkingSet: ActiveWorkingSet
+  graphState: DesignTypes.GraphState
+  proposedChange?: GraphDelta
+  knownVersion?: number
+}
+
+export interface Output {
+  type: "enriched-input" | "graph-summary" | "change-proposal" | "change-applied" | "rejected"
+  summary: string
+  structured?: {
+    warnings?: Array<{ code: string; message: string; nodeId?: string; edgeKey?: string }>
+    suggestions?: Array<{ action: string; reason: string }>
+  }
+  affectedNodes: string[]
+  affectedEdges: string[]
+  questions?: string[]
+  delta?: GraphDelta
+}
+
+export * as GraphAgent from "./types"
 ```
 
-Inside the moved `createNode` implementation, use `id: input.id ?? makeId("node")` so that restored nodes keep their original IDs.
+- [ ] **Step 4: Run test to verify it passes**
 
-- [ ] **Step 3: Verify `GraphEngine` tests still pass**
+Run: `bun test test/design/agent/types.test.ts`
+Expected: PASS
 
-Run:
+- [ ] **Step 5: Commit**
+
 ```bash
-cd packages/opencode
-bun test test/design/core/graph.test.ts
+git add src/design/agent/types.ts test/design/agent/types.test.ts
+git commit -m "feat(design): define GraphAgent core types"
 ```
 
-Expected: all tests pass with no changes to test files.
+## Global Constraints
 
-- [ ] **Step 4: Commit**
-
-```bash
-git add packages/opencode/src/design/core/graph.ts
-git commit -m "refactor(design): extract GraphEngine factory"
-```
-
----
+- 仅面向 Windows 桌面端 GUI；CLI 与 Web 不在范围内。
+- 不替换现有 `Design.Service` 和 SQLite 存储层。
+- 使用 Effect `Effect.gen` 和 `Effect.fn`；遵循 `src/effect/instance-state.ts` 进行 per-project 状态隔离。
+- 模块组织使用 flat top-level exports + `export * as Namespace from "./file"`；禁止使用 `export namespace Foo`。
+- 字段/列名使用 snake_case。
+- 避免 `try`/`catch`，优先使用 Effect 错误通道。
+- 测试从 `packages/opencode` 目录运行；不使用 root 运行测试。
+- 类型检查使用 `bun run typecheck` from `packages/opencode`。

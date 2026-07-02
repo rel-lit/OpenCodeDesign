@@ -1,55 +1,95 @@
-### Task 8: Remove legacy JSON/JSONL persistence
+# Task 8: 实现临时工作集计算
 
 **Files:**
-- Delete: `packages/opencode/src/design/core/persistence.ts`
-- Delete: `packages/opencode/test/design/core/persistence.test.ts`
-- Modify: `packages/opencode/src/design/index.ts` (if it re-exports `Persistence`)
+- Create: `src/design/system/working-set-computer.ts`
+- Test: `test/design/system/working-set-computer.test.ts`
 
-**Why:** JSON/JSONL persistence is replaced by SQLite. Keeping it creates confusion and duplicate code paths.
+**Interfaces:**
+- Consumes: `@` references, active working set, keywords, proposed delta, graph state
+- Produces: `TemporaryWorkingSet` (initial)
 
-- [ ] **Step 1: Delete legacy files**
+- [ ] **Step 1: Write the failing test**
 
-```bash
-git rm packages/opencode/src/design/core/persistence.ts
-git rm packages/opencode/test/design/core/persistence.test.ts
+```typescript
+test("includes involved nodes, adjacent edges, and active nodes", () => {
+  const graphState = {
+    contexts: [{ id: "ctx-core", name: "core" }],
+    nodes: [
+      { id: "node-1", name: "OrderService", contextId: "ctx-core", kind: "service" },
+      { id: "node-5", name: "UserService", contextId: "ctx-core", kind: "service" },
+    ],
+    edges: [{ leftNodeId: "node-1", rightNodeId: "node-5", label: "uses" }],
+    prototypes: [],
+  }
+  const active = { contextIds: ["ctx-core"], nodeIds: ["node-5"], capacity: 10 }
+  const result = WorkingSetComputer.fromInput("修改 @UserService", active, graphState)
+  expect(result.nodeIds).toContain("node-5")
+  expect(result.nodeIds).toContain("node-1") // 相邻节点
+  expect(result.edgeKeys).toContain("node-1->node-5")
+})
 ```
 
-- [ ] **Step 2: Remove `Persistence` from design exports**
+- [ ] **Step 2: Implement computer**
 
-Modify `packages/opencode/src/design/index.ts`:
+```typescript
+// src/design/system/working-set-computer.ts
+import * as GraphAgentTypes from "@/design/agent/types"
 
-```diff
-  export * as Design from "./design"
-  export * as GraphEngine from "./core/graph"
-  export * as WorkingSet from "./core/working-set"
-  export * as EventLog from "./core/event-log"
-- export * as Persistence from "./core/persistence"
-  export * as DesignTypes from "./core/types"
+export const fromInput = (
+  input: string,
+  active: GraphAgentTypes.ActiveWorkingSet,
+  graphState: DesignTypes.GraphState
+): GraphAgentTypes.TemporaryWorkingSet => {
+  const mentionedNames = Array.from(input.matchAll(/@([A-Za-z0-9_]+)/g)).map((m) => m[1])
+  const mentionedNodeIds = mentionedNames
+    .map((name) => graphState.nodes.find((n) => n.name === name)?.id)
+    .filter((id): id is string => !!id)
+
+  const involvedNodeIds = new Set([...active.nodeIds, ...mentionedNodeIds])
+  const involvedEdgeKeys = new Set<string>()
+
+  for (const edge of graphState.edges) {
+    if (involvedNodeIds.has(edge.leftNodeId) || involvedNodeIds.has(edge.rightNodeId)) {
+      involvedEdgeKeys.add(`${edge.leftNodeId}->${edge.rightNodeId}`)
+      involvedNodeIds.add(edge.leftNodeId)
+      involvedNodeIds.add(edge.rightNodeId)
+    }
+  }
+
+  return {
+    contextIds: [...new Set([...active.contextIds, ...Array.from(involvedNodeIds).map((id) => graphState.nodes.find((n) => n.id === id)!.contextId)])],
+    nodeIds: [...involvedNodeIds],
+    edgeKeys: [...involvedEdgeKeys],
+    systemAnalysis: { conflictingRelations: [], duplicateNodeCandidates: [], orphanNodes: [], invalidPrototypeUsage: [] },
+    expandedByGraphAgent: { contextIds: [], nodeIds: [], edgeKeys: [], reason: "" },
+  }
+}
+
+export * as WorkingSetComputer from "./working-set-computer"
 ```
 
-Then verify no other file imports `@/design/core/persistence`:
+- [ ] **Step 3: Run test to verify it passes**
 
-```bash
-cd packages/opencode
-grep -r "core/persistence" src/design test/design
-```
-
-Expected: no matches.
-
-- [ ] **Step 3: Run tests and typecheck**
-
-```bash
-cd packages/opencode
-bun typecheck
-bun test test/design
-```
-
-Expected: typecheck passes; design tests pass.
+Run: `bun test test/design/system/working-set-computer.test.ts`
+Expected: PASS
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git commit -m "chore(design): remove legacy JSON/JSONL persistence"
+git add src/design/system/working-set-computer.ts test/design/system/working-set-computer.test.ts
+git commit -m "feat(design): implement temporary working set computer"
 ```
 
----
+## Global Constraints
+
+- 仅面向 Windows 桌面端 GUI；CLI 与 Web 不在范围内。
+- 不替换现有 `Design.Service` 和 SQLite 存储层。
+- 模块组织使用 flat top-level exports + `export * as Namespace from "./file"`；禁止使用 `export namespace Foo`。
+- 字段/列名使用 snake_case。
+- 测试从 `packages/opencode` 目录运行；不使用 root 运行测试。
+- 类型检查使用 `bun run typecheck` from `packages/opencode`。
+
+## Dependencies from Previous Tasks
+
+- `GraphAgentTypes.TemporaryWorkingSet` / `ActiveWorkingSet` in `src/design/agent/types.ts`
+- `DesignTypes.GraphState` in `src/design/core/types.ts`
