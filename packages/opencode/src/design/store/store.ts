@@ -79,9 +79,15 @@ const makeStore = (db: DbLike): Store => {
         affected_node_ids TEXT NOT NULL DEFAULT '[]',
         affected_edge_keys TEXT NOT NULL DEFAULT '[]',
         rollback_target TEXT,
-        reason TEXT
+        reason TEXT,
+        source TEXT
       )
     `)
+
+    const columns = (yield* all(sql`PRAGMA table_info(design_events)`)) as Array<{ name: string }>
+    if (!columns.some((c) => c.name === "source")) {
+      yield* run(sql`ALTER TABLE design_events ADD COLUMN source TEXT`)
+    }
   })
 
   const loadGraphState = Effect.fn("DesignStore.loadGraphState")(function* () {
@@ -149,12 +155,12 @@ const makeStore = (db: DbLike): Store => {
     yield* run(sql`
       INSERT INTO design_events (
         id, name, event_type, timestamp, affected_node_ids, affected_edge_keys,
-        rollback_target, reason
+        rollback_target, reason, source
       )
       VALUES (
         ${event.id}, ${event.name}, ${event.eventType}, ${event.timestamp},
         ${JSON.stringify(event.affectedNodeIds)}, ${JSON.stringify(event.affectedEdgeKeys)},
-        ${event.rollbackTarget ?? null}, ${event.reason ?? null}
+        ${event.rollbackTarget ?? null}, ${event.reason ?? null}, ${event.source ?? null}
       )
     `)
   })
@@ -222,6 +228,7 @@ interface EventRow {
   readonly affected_edge_keys: string
   readonly rollback_target: string | null
   readonly reason: string | null
+  readonly source: string | null
 }
 
 const rowFromContext = (row: ContextRow): DesignTypes.BoundedContext => ({
@@ -276,6 +283,7 @@ const rowFromEvent = (row: EventRow): DesignTypes.EventNode => ({
   affectedEdgeKeys: JSON.parse(row.affected_edge_keys),
   rollbackTarget: row.rollback_target ?? undefined,
   reason: row.reason ?? undefined,
+  source: row.source as DesignTypes.VersionBumpSource | null ?? undefined,
 })
 
 const DESIGN_DIR = ".opencode/design"

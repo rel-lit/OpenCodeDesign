@@ -141,6 +141,7 @@ export const layer = (options?: LayerOptions) =>
               affectedEdgeKeys: [...event.affectedEdgeKeys],
               reason: event.reason,
               rollbackTarget: event.rollbackTarget,
+              source: event.source,
             })
           }
         }
@@ -395,7 +396,17 @@ export const layer = (options?: LayerOptions) =>
 
     const getCurrentVersion = Effect.fn("Design.getCurrentVersion")(() => use((state) => state.versionSync.getCurrentVersion()))
     const bumpVersion = Effect.fn("Design.bumpVersion")((source: VersionSync.GraphVersion["source"]) =>
-      use((state) => state.versionSync.bumpVersion(source)),
+      use((state) =>
+        Effect.gen(function* () {
+          const version = yield* state.versionSync.bumpVersion(source)
+          const events = yield* state.eventLog.list()
+          const event = events[events.length - 1]
+          if (event?.eventType === "graph_version_bumped") {
+            yield* persistMutation(event)
+          }
+          return version
+        }),
+      ),
     )
     const refreshChatAgentContext = Effect.fn("Design.refreshChatAgentContext")((version: VersionSync.GraphVersion) =>
       use((state) => state.versionSync.refreshChatAgentContext(version)),

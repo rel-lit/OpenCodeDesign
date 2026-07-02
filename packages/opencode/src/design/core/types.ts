@@ -69,8 +69,12 @@ export const EventType = Schema.Literals([
   "context_updated",
   "working_set_changed",
   "event_rollback",
+  "graph_version_bumped",
 ])
 export type EventType = Schema.Schema.Type<typeof EventType>
+
+export const VersionBumpSource = Schema.Literals(["chat-agent", "visual-editor"])
+export type VersionBumpSource = Schema.Schema.Type<typeof VersionBumpSource>
 
 export const EventNode = Schema.Struct({
   id: Schema.String,
@@ -92,6 +96,7 @@ export const EventNode = Schema.Struct({
   affectedEdgeKeys: Schema.Array(Schema.String),
   rollbackTarget: Schema.optional(Schema.String),
   reason: Schema.optional(Schema.String),
+  source: Schema.optional(VersionBumpSource),
 })
 export type EventNode = Schema.Schema.Type<typeof EventNode>
 

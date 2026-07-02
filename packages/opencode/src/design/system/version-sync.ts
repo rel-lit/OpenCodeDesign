@@ -1,10 +1,11 @@
 import { Context, Effect, Layer } from "effect"
 import { EventLog } from "../core/event-log"
+import { DesignTypes } from "../core/types"
 
 export interface GraphVersion {
   sequence: number
   timestamp: number
-  source: "chat-agent" | "visual-editor"
+  source: DesignTypes.VersionBumpSource
 }
 
 export interface Interface {
@@ -18,13 +19,21 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/De
 export const make = (eventLog: EventLog.Interface): Interface => {
   const getCurrentVersion = Effect.fn("VersionSync.getCurrentVersion")(function* () {
     const events = yield* eventLog.list()
-    const sequence = events.length
-    const last = events[events.length - 1]
-    const lastSource = (last as { source?: GraphVersion["source"] } | undefined)?.source
+    const versionEvents = events.filter((e): e is DesignTypes.EventNode & { source: DesignTypes.VersionBumpSource } =>
+      e.eventType === "graph_version_bumped" && e.source !== undefined
+    )
+    const latest = versionEvents[versionEvents.length - 1]
+    if (latest === undefined) {
+      return {
+        sequence: 0,
+        timestamp: Date.now(),
+        source: "chat-agent" as const,
+      }
+    }
     return {
-      sequence,
-      timestamp: last?.timestamp ?? Date.now(),
-      source: lastSource ?? "chat-agent",
+      sequence: versionEvents.length,
+      timestamp: latest.timestamp,
+      source: latest.source,
     }
   })
 
@@ -35,12 +44,13 @@ export const make = (eventLog: EventLog.Interface): Interface => {
       timestamp: Date.now(),
       source,
     }
+    yield* eventLog.append({ eventType: "graph_version_bumped", source })
     yield* refreshChatAgentContext(next)
     return next
   })
 
-  const refreshChatAgentContext = Effect.fn("VersionSync.refreshChatAgentContext")(function* (_version) {
-    return yield* Effect.void
+  const refreshChatAgentContext = Effect.fn("VersionSync.refreshChatAgentContext")(function* (version) {
+    yield* Effect.logInfo("refreshing chat agent context", version)
   })
 
   return { getCurrentVersion, bumpVersion, refreshChatAgentContext }

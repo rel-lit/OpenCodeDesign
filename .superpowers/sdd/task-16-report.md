@@ -112,3 +112,59 @@ bun run typecheck
 Result: **PASS** (`$ tsgo --noEmit`).
 
 No additional code changes were required; the fix in commit `4b4fdc6f` already addresses the issue.
+
+## Fix 1: Approval Panel Deadlock
+
+Fixed in commit 4b4fdc6f. proposeChanges auto-executes when no panel is provided. Verified: 74 design tests pass, typecheck clean.
+
+---
+
+## Fix 2: Durable EventLog-Based Version Sync
+
+### What Changed
+
+Replaced the stub `VersionSync` implementation with durable version events stored in the `EventLog`.
+
+- `packages/opencode/src/design/core/types.ts`:
+  - Added `"graph_version_bumped"` to the `EventType` literal union.
+  - Added `VersionBumpSource` literal schema (`"chat-agent" | "visual-editor"`).
+  - Added optional `source` field to `EventNode` so version-bump events can carry their source.
+
+- `packages/opencode/src/design/core/event-log.ts`:
+  - Extended `append` input to accept an optional `source`.
+  - Preserved `source` on appended `EventNode` instances.
+
+- `packages/opencode/src/design/store/store.ts`:
+  - Added a nullable `source TEXT` column to `design_events`.
+  - Added a schema-migration step that adds the column to existing tables via `PRAGMA table_info` / `ALTER TABLE`.
+  - Persisted and restored `source` in `appendEvent` and `rowFromEvent`.
+
+- `packages/opencode/src/design/system/version-sync.ts`:
+  - `getCurrentVersion` now filters for `graph_version_bumped` events and derives sequence from the count of those events, reading source/timestamp from the latest bump.
+  - `bumpVersion(source)` appends a `graph_version_bumped` event before refreshing the chat-agent context.
+  - `refreshChatAgentContext` now logs the version via `Effect.logInfo` so the requested version is accessible.
+
+- `packages/opencode/src/design/design.ts`:
+  - Restored `source` when replaying persisted events into the in-memory `EventLog`.
+  - `Design.bumpVersion` now persists the newly appended version event through `persistMutation` so the bump survives reloads.
+
+- `packages/opencode/test/design/system/version-sync.test.ts`:
+  - Updated expectations so sequence reflects bump count rather than total event count.
+  - Added assertions that the bump event is durably appended and that `getCurrentVersion` reflects it.
+  - Added a test for multiple consecutive bumps.
+
+### Test Results
+
+```bash
+bun test test/design/system/version-sync.test.ts test/design/design.test.ts test/tool/design.test.ts
+```
+
+Result: **19 pass, 0 fail** across 3 files.
+
+```bash
+bun run typecheck
+```
+
+Result: **PASS** (`$ tsgo --noEmit`).
+
+

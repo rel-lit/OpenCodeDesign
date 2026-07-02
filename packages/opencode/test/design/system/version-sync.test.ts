@@ -7,7 +7,7 @@ import { VersionSync } from "../../../src/design/system/version-sync"
 const it = testEffect(VersionSync.defaultLayer)
 
 describe("VersionSync", () => {
-  it.effect("getCurrentVersion returns sequence from EventLog", () =>
+  it.effect("getCurrentVersion returns default version when no bump events exist", () =>
     Effect.gen(function* () {
       const vs = yield* VersionSync.Service
       const version = yield* vs.getCurrentVersion()
@@ -17,16 +17,35 @@ describe("VersionSync", () => {
     }),
   )
 
-  it.effect("bumpVersion returns incremented sequence with source", () =>
+  it.effect("bumpVersion appends a durable event and returns incremented sequence with source", () =>
     Effect.gen(function* () {
       const eventLog = yield* EventLog.Service
       const vs = yield* VersionSync.Service
       yield* eventLog.append({ eventType: "node_created" })
       yield* eventLog.append({ eventType: "edge_created" })
-      const version = yield* vs.bumpVersion("visual-editor")
-      expect(version.sequence).toBe(3)
-      expect(version.source).toBe("visual-editor")
-      expect(version.timestamp).toBeGreaterThan(0)
+
+      const bumped = yield* vs.bumpVersion("visual-editor")
+      expect(bumped.sequence).toBe(1)
+      expect(bumped.source).toBe("visual-editor")
+      expect(bumped.timestamp).toBeGreaterThan(0)
+
+      const current = yield* vs.getCurrentVersion()
+      expect(current.sequence).toBe(1)
+      expect(current.source).toBe("visual-editor")
+
+      const events = yield* eventLog.list()
+      const versionEvents = events.filter((e) => e.eventType === "graph_version_bumped")
+      expect(versionEvents.length).toBe(1)
+      expect(versionEvents[0].source).toBe("visual-editor")
+    }),
+  )
+
+  it.effect("bumpVersion increments sequence across multiple calls", () =>
+    Effect.gen(function* () {
+      const vs = yield* VersionSync.Service
+      const first = yield* vs.bumpVersion("chat-agent")
+      const second = yield* vs.bumpVersion("chat-agent")
+      expect(second.sequence).toBe(first.sequence + 1)
     }),
   )
 })

@@ -10,6 +10,7 @@ export interface Interface {
     affectedEdgeKeys?: string[]
     reason?: string
     rollbackTarget?: string
+    source?: DesignTypes.VersionBumpSource
   }) => Effect.Effect<DesignTypes.EventNode>
   readonly rollbackTo: (eventId: string) => Effect.Effect<DesignTypes.EventNode, Error>
   readonly list: () => Effect.Effect<DesignTypes.EventNode[]>
@@ -39,6 +40,7 @@ export const makeEventLog = Effect.fn("EventLog.make")(function* () {
       affectedEdgeKeys: input.affectedEdgeKeys ?? [],
       reason: input.reason,
       rollbackTarget: input.rollbackTarget,
+      source: input.source,
     }
     events.push(event)
     return event
