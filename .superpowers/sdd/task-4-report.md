@@ -99,3 +99,54 @@ Ran 1 test across 1 file.
 ## Issues or concerns
 
 None blocking. The main assumption is that `deleteEdgeKeys` uses the same canonical key format produced by `DesignTypes.edgeKey`. If that format ever changes, parsing must stay in sync.
+
+## Reviewer Findings
+
+- Important: GraphAgent.defaultLayer should also provide Design.defaultLayer because execute now depends on Design.Service.
+- Important: Design.Service.transaction ignores transactional store argument; works but is fragile.
+- Minor: transaction generic drops R; parseEdgeKey could fail typed error; transaction lacks Effect.fn trace.
+
+## Review Finding Fix
+
+### What changed
+
+Updated `GraphAgent.defaultLayer` in `packages/opencode/src/design/agent/graph.ts` to also provide `Design.defaultLayer`. The layer now composes both dependencies required by `GraphAgent.layer`:
+
+```ts
+export const defaultLayer = layer.pipe(
+  Layer.provide(DesignAgentLlm.defaultLayer),
+  Layer.provide(Design.defaultLayer),
+)
+```
+
+This ensures consumers using `GraphAgent.defaultLayer` directly have `Design.Service` available for `GraphAgent.execute()`.
+
+### Test commands and results
+
+Focused test:
+
+```
+bun test test/design/agent/graph-execute.test.ts
+ 4 pass
+ 0 fail
+ 12 expect() calls
+Ran 4 tests across 1 file.
+```
+
+Typecheck:
+
+```
+bun run typecheck
+$ tsgo --noEmit
+```
+
+Design-related tests:
+
+```
+bun test test/design
+ 32 pass
+ 0 fail
+ 79 expect() calls
+Ran 32 tests across 8 files.
+```
+

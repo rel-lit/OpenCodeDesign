@@ -126,6 +126,9 @@ export const layer = Layer.effect(
   }),
 )
 
-export const defaultLayer = layer.pipe(Layer.provide(DesignAgentLlm.defaultLayer))
+export const defaultLayer = layer.pipe(
+  Layer.provide(DesignAgentLlm.defaultLayer),
+  Layer.provide(Design.defaultLayer),
+)
 
 export * as GraphAgent from "./graph"
