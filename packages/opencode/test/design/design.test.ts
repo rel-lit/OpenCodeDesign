@@ -138,4 +138,58 @@ describe("Design.Service", () => {
       }).pipe(Effect.provide(regressionLayer))
     }),
   )
+
+  it.instance("proposeChanges auto-approves when no panel is injected", () =>
+    Effect.gen(function* () {
+      const calls = { executed: [] as GraphAgentTypes.Output[] }
+      const mockGraphAgent = GraphAgent.Service.of({
+        analyze: (input) =>
+          Effect.succeed({
+            type: "change-proposal" as const,
+            summary: "auto-approve",
+            affectedNodes: [],
+            affectedEdges: [],
+            delta: input.proposedChange,
+          }),
+        execute: (proposal) =>
+          Effect.gen(function* () {
+            calls.executed.push(proposal)
+            const design = yield* Design.Service
+            const delta = proposal.delta
+            if (!delta) return { ...proposal, type: "change-applied" as const }
+            yield* design.transaction(
+              Effect.gen(function* () {
+                for (const update of delta.updateNodes ?? []) {
+                  yield* design.updateNode(update.id, update.patch)
+                }
+              }),
+            )
+            yield* design.bumpVersion("chat-agent")
+            return { ...proposal, type: "change-applied" as const }
+          }),
+      })
+
+      const autoApproveLayer = Design.layer().pipe(
+        Layer.provide(DesignStore.defaultLayer),
+        Layer.provide(Layer.succeed(GraphAgent.Service, mockGraphAgent)),
+      )
+
+      return yield* Effect.gen(function* () {
+        const design = yield* Design.Service
+        yield* design.init()
+        const ctx = yield* design.createContext({ id: "ctx-auto", name: "Auto" })
+        yield* design.createNode({ id: "node-auto", name: "Before", contextId: ctx.id })
+
+        const result = yield* design.proposeChanges({
+          updateNodes: [{ id: "node-auto", patch: { name: "After" } }],
+        })
+
+        expect(result.type).toBe("change-applied")
+        expect(calls.executed.length).toBe(1)
+        const node = yield* design.getNode("node-auto")
+        expect(node?.name).toBe("After")
+      }).pipe(Effect.provide(autoApproveLayer))
+    }),
+  )
 })
+

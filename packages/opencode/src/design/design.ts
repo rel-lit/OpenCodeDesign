@@ -91,7 +91,7 @@ export const layer = (options?: LayerOptions) =>
     Effect.gen(function* () {
       const designStore = yield* DesignStore.Service
       const graphAgent = yield* GraphAgent.Service
-      const makeApprovalPanel = options?.makeApprovalPanel ?? ApprovalPanel.make
+      const makeApprovalPanel = options?.makeApprovalPanel
 
     const designState = yield* InstanceState.make<DesignState, never, Scope.Scope>(
       Effect.fn("Design.state")(function* () {
@@ -485,10 +485,13 @@ export const layer = (options?: LayerOptions) =>
           }
           const proposal = yield* graphAgent.analyze(input)
           if (proposal.type !== "change-proposal") return proposal
-          const approvalPanel = panel ?? makeApprovalPanel()
-          approvalPanel.propose(proposal)
-          const approved = yield* approvalPanel.awaitConfirmation()
-          return yield* graphAgent.execute(approved).pipe(Effect.provideService(Service, self as Interface))
+          const approvalPanel = panel ?? makeApprovalPanel?.()
+          if (approvalPanel) {
+            approvalPanel.propose(proposal)
+            const approved = yield* approvalPanel.awaitConfirmation()
+            return yield* graphAgent.execute(approved).pipe(Effect.provideService(Service, self as Interface))
+          }
+          return yield* graphAgent.execute(proposal).pipe(Effect.provideService(Service, self as Interface))
         }),
     )
 
