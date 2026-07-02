@@ -4,9 +4,23 @@ import { testEffect } from "../lib/effect"
 import { Design } from "../../src/design/design"
 import { DesignAgentLlm } from "../../src/design/agent/llm"
 import { GraphAgent } from "../../src/design/agent/graph"
+import * as GraphAgentTypes from "../../src/design/agent/types"
 import { DesignStore } from "../../src/design/store/store"
 import { InstanceStore } from "../../src/project/instance-store"
 import { TestInstance } from "../fixture/fixture"
+import { ApprovalPanel } from "../../src/design/approval-panel"
+
+const autoConfirmPanel = (): ApprovalPanel.Interface => {
+  const panel = ApprovalPanel.make()
+  const originalPropose = panel.propose
+  return {
+    ...panel,
+    propose: (proposal) => {
+      originalPropose(proposal)
+      panel.confirm()
+    },
+  }
+}
 
 const mockLlmLayer = Layer.succeed(
   DesignAgentLlm.Service,
@@ -62,6 +76,66 @@ describe("Design.Service", () => {
 
       const nodes = yield* design.listNodes()
       expect(nodes.length).toBe(1)
+    }),
+  )
+
+  it.instance("proposeChanges executes delta and bumps version", () =>
+    Effect.gen(function* () {
+      const calls = { analyzed: [] as GraphAgentTypes.Input[], executed: [] as GraphAgentTypes.Output[] }
+      const mockGraphAgent = GraphAgent.Service.of({
+        analyze: (input) => {
+          calls.analyzed.push(input)
+          return Effect.succeed({
+            type: "change-proposal" as const,
+            summary: "regression proposal",
+            affectedNodes: input.proposedChange?.updateNodes?.map((n) => n.id) ?? [],
+            affectedEdges: [],
+            delta: input.proposedChange,
+          })
+        },
+        execute: (proposal) =>
+          Effect.gen(function* () {
+            calls.executed.push(proposal)
+            const design = yield* Design.Service
+            const delta = proposal.delta
+            if (!delta) return { ...proposal, type: "change-applied" as const }
+            yield* design.transaction(
+              Effect.gen(function* () {
+                for (const update of delta.updateNodes ?? []) {
+                  yield* design.updateNode(update.id, update.patch)
+                }
+              }),
+            )
+            yield* design.bumpVersion("chat-agent")
+            return { ...proposal, type: "change-applied" as const }
+          }),
+      })
+
+      const regressionLayer = Design.layer({ makeApprovalPanel: autoConfirmPanel }).pipe(
+        Layer.provide(DesignStore.defaultLayer),
+        Layer.provide(Layer.succeed(GraphAgent.Service, mockGraphAgent)),
+      )
+
+      return yield* Effect.gen(function* () {
+        const design = yield* Design.Service
+        yield* design.init()
+        const ctx = yield* design.createContext({ id: "ctx-regression", name: "Regression" })
+        yield* design.createNode({ id: "node-r", name: "Before", contextId: ctx.id })
+
+        const before = yield* design.getCurrentVersion()
+
+        const result = yield* design.proposeChanges({
+          updateNodes: [{ id: "node-r", patch: { name: "After" } }],
+        })
+
+        expect(result.type).toBe("change-applied")
+        expect(calls.executed.length).toBe(1)
+        const node = yield* design.getNode("node-r")
+        expect(node?.name).toBe("After")
+
+        const after = yield* design.getCurrentVersion()
+        expect(after.sequence).toBe(before.sequence + 1)
+      }).pipe(Effect.provide(regressionLayer))
     }),
   )
 })

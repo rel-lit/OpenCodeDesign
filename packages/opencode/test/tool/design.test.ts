@@ -99,6 +99,7 @@ const mockGraphAgentLayer = Layer.succeed(
             }
           }),
         )
+        yield* design.bumpVersion("chat-agent")
         return { ...proposal, type: "change-applied" as const }
       }),
   }),
@@ -406,6 +407,25 @@ describe("Design tools", () => {
       expect(executed.length).toBe(1)
       expect(executed[0].type).toBe("change-proposal")
       expect(result.type).toBe("change-applied")
+    }),
+  )
+
+  it.instance("create_node tool bumps graph version via proposeChanges", () =>
+    Effect.gen(function* () {
+      const design = yield* Design.Service
+      const ctxTool = yield* DesignCreateContextTool
+      const nodeTool = yield* DesignCreateNodeTool
+      const ctx = makeCtx()
+
+      const ctxResult = yield* (yield* Tool.init(ctxTool)).execute({ name: "VersionCtx" }, ctx)
+      const contextId = ctxResult.metadata.contextId as string
+
+      const before = yield* design.getCurrentVersion()
+
+      yield* (yield* Tool.init(nodeTool)).execute({ name: "VersionNode", contextId }, ctx)
+
+      const after = yield* design.getCurrentVersion()
+      expect(after.sequence).toBe(before.sequence + 1)
     }),
   )
 })
