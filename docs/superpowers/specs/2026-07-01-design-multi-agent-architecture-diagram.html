@@ -16,7 +16,7 @@
 </head>
 <body>
   <h1>Design 多 Agent 架构图</h1>
-  <p class="note">审批面板是 Design DB 写入的唯一闸门。GraphAgent 是审批后的执行者，不直接面对用户。</p>
+  <p class="note">审批面板是 Design DB 写入的唯一闸门。GraphAgent 是审批后的执行者，不直接面对用户。本架构仅面向 Windows 桌面端 GUI；CLI 与 Web 不在范围内。</p>
 
   <h2>1. 总体架构</h2>
   <div class="mermaid">
@@ -122,7 +122,8 @@ flowchart LR
     SA -->|搜索 / 阅读| WEB
     WEB -->|原始信息| SA
     SA -->|对比分析 + 总结| CA
+    SA -->|差异分析| Plan[Plan / Edit 模式]
   </div>
-  <p class="note">SearchAgent 带着当前图摘要和明确检索目的去工作，自行完成参考设计与当前图的对比，不需要 GraphAgent 处理未知工作集。</p>
+  <p class="note">SearchAgent 带着当前图摘要和明确检索目的去工作，自行完成参考设计与当前图的对比，不需要 GraphAgent 处理未知工作集。差异分析可交给 Plan 模式用于代码实现。</p>
 </body>
 </html>
