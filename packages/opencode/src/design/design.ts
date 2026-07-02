@@ -61,6 +61,10 @@ export interface Interface {
     diffAnalysis: PlanHandoff.PlanHandoffPayload["diffAnalysis"]
     designGraphSummary: string
   }) => Effect.Effect<PlanHandoff.PlanHandoffPayload>
+  readonly applyRawDelta: (delta: GraphAgentTypes.GraphDelta) => Effect.Effect<
+    void,
+    GraphEngine.GraphEngineError
+  >
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Design") {}
@@ -383,6 +387,53 @@ export const layer = (options?: LayerOptions) =>
       designGraphSummary: string
     }) => Effect.succeed(PlanHandoff.build(input)))
 
+    const parseEdgeKey = (key: string): [string, string] => {
+      const parts = key.split("::")
+      return [parts[0], parts[1]]
+    }
+
+    const applyRawDelta = Effect.fn("Design.applyRawDelta")((delta: GraphAgentTypes.GraphDelta) =>
+      use((state) =>
+        state.store.transaction((txStore) =>
+          Effect.gen(function* () {
+            for (const node of delta.addNodes ?? []) {
+              yield* state.graph.createNode({
+                id: node.id,
+                name: node.name,
+                contextId: node.contextId,
+                kind: node.kind,
+                defaultSemantics: node.defaultSemantics,
+                aliases: [...node.aliases],
+              })
+            }
+            for (const update of delta.updateNodes ?? []) {
+              yield* state.graph.updateNode(update.id, update.patch)
+            }
+            for (const id of delta.deleteNodeIds ?? []) {
+              yield* state.graph.deleteNode(id)
+            }
+            for (const edge of delta.addEdges ?? []) {
+              yield* state.graph.createEdge({
+                leftNodeId: edge.leftNodeId,
+                rightNodeId: edge.rightNodeId,
+                prototypeId: edge.prototypeId,
+                parameters: { ...edge.parameters },
+              })
+            }
+            for (const update of delta.updateEdges ?? []) {
+              yield* state.graph.updateEdge(update.leftNodeId, update.rightNodeId, update.patch)
+            }
+            for (const key of delta.deleteEdgeKeys ?? []) {
+              const [leftNodeId, rightNodeId] = parseEdgeKey(key)
+              yield* state.graph.deleteEdge(leftNodeId, rightNodeId)
+            }
+            const graphState = yield* state.graph.getState()
+            yield* txStore.saveGraphState(graphState)
+          }),
+        ),
+      ),
+    )
+
     let self!: Interface
 
     const proposeChanges = Effect.fn("Design.proposeChanges")(
@@ -456,6 +507,7 @@ export const layer = (options?: LayerOptions) =>
       proposeChanges,
       preprocessInput,
       handoffToPlan,
+      applyRawDelta,
     })
 
     return self
