@@ -16,6 +16,7 @@ import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
 import PROMPT_DESIGN from "./prompt/design.txt"
 import PROMPT_GRAPH from "@/design/agent/prompt/graph.txt"
+import PROMPT_SEARCH from "@/design/agent/prompt/search.txt"
 import { Permission } from "@/permission"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Global } from "@opencode-ai/core/global"
@@ -184,6 +185,28 @@ export const layer = Layer.effect(
           options: {},
         }
 
+        const searchAgentInfo: Info = {
+          name: "design-search",
+          description: "Searches the codebase against a design graph summary and returns a summary report and diff analysis.",
+          mode: "subagent",
+          native: true,
+          permission: Permission.merge(
+            defaults,
+            Permission.fromConfig({
+              "*": "deny",
+              grep: "allow",
+              glob: "allow",
+              list: "allow",
+              bash: "allow",
+              read: "allow",
+              external_directory: readonlyExternalDirectory,
+            }),
+            user,
+          ),
+          prompt: PROMPT_SEARCH,
+          options: {},
+        }
+
         const agents: Record<string, Info> = {
           build: {
             name: "build",
@@ -236,6 +259,7 @@ export const layer = Layer.effect(
           prompt: PROMPT_DESIGN,
         },
         "design-graph": graphAgentInfo,
+        "design-search": searchAgentInfo,
         general: {
             name: "general",
             description: `General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.`,

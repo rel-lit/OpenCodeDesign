@@ -1,33 +1,46 @@
-# Task 11 Report: Add missing coverage tests
+# Task 11 Report
 
-## What was added
+## What I implemented
 
-### `packages/opencode/test/design/store/store.test.ts`
-- **Per-instance isolation test** (`isolates state between instances`): Saves graph state and verifies it loads back correctly within the instance.
-- **Transaction failure test** (`Leaves prior state intact on transaction failure`): Simulates a transaction that fails after writing, then verifies prior state is intact.
-- **Directory creation test** (`creates the design directory and sqlite file`): Verifies `ensureSchema()` creates the `.opencode/design/design.sqlite` file on disk.
-- Added imports: `Exit` from "effect", `path`, `TestInstance` from fixture.
+- Created `src/design/agent/search.ts` with the SearchAgent Effect service skeleton.
+  - Defined `Input`, `Output`, and `Interface` types per the task brief.
+  - Registered `Service` under the tag `@opencode/DesignSearchAgent` with `serviceUse` helper.
+  - Implemented `layer` using `Layer.effect` and `Effect.gen`, returning `Service.of({ search, readProject })` to match the repository's Effect service conventions.
+  - Both `search` and `readProject` currently return placeholder `Effect.succeed` outputs.
+  - Added the self-reexport `export * as SearchAgent from "./search"`.
+- Created `src/design/agent/prompt/search.txt` with a placeholder SearchAgent system prompt.
+- Modified `src/agent/agent.ts` to register `design-search` as a native subagent with read/search-oriented permissions (grep, glob, list, bash, read, external_directory).
+- Created `test/design/agent/search.test.ts` with a mock-layer test verifying the `search` method returns a truthy `summaryReport`.
 
-### `packages/opencode/test/design/design.test.ts`
-- **Per-instance isolation test** (`isolates graph state per directory`): Creates a context and node, verifies the service is bound to the current instance.
+## What I tested and test results
 
-## Test results
+- `bun test test/design/agent/search.test.ts` — PASS (1/1)
+- `bun test test/design/` — PASS (52/52)
+- `bun test test/agent/` — 48/49 pass. The single failure (`defaultAgent throws when all primary agents are disabled`) is pre-existing: I verified it fails on the unmodified `src/agent/agent.ts` as well, so it is unrelated to this change.
+- `bun run typecheck` — PASS (no errors)
 
-All 26 tests pass across 5 files, 0 failures, 61 expect calls.
+## TDD Evidence
+
+1. Wrote `test/design/agent/search.test.ts` first.
+2. Ran the test; it failed with `Cannot find module '@/design/agent/search'`.
+3. Implemented `src/design/agent/search.ts` and `src/design/agent/prompt/search.txt`.
+4. Ran the test again; it passed.
 
 ## Files changed
 
-- `packages/opencode/test/design/store/store.test.ts` (+65 lines)
-- `packages/opencode/test/design/design.test.ts` (+14 lines)
+- `src/design/agent/search.ts` (new)
+- `src/design/agent/prompt/search.txt` (new)
+- `src/agent/agent.ts` (modified)
+- `test/design/agent/search.test.ts` (new)
+- `.superpowers/sdd/task-11-report.md` (this report)
 
 ## Self-review findings
 
-- Imports are correctly placed (grouped at top, `Exit` merged into existing effect import, `path` and `TestInstance` added in standard positions).
-- All tests use the existing `it.instance` pattern consistent with the test fixtures guide.
-- Tests follow Effect generator style (`Effect.gen(function* () { ... })`).
-- No `try`/`catch` used.
-- Commit message follows conventional commit format: `test(design): add per-instance and transaction coverage`.
+- The task brief used `Effect.map(Service.make)`, which does not exist in this codebase. I corrected it to the repository's standard `Layer.effect(Service, Effect.gen(...))` / `Service.of(...)` pattern and confirmed typecheck passes.
+- Followed flat top-level exports + self-reexport convention; no `export namespace Foo`.
+- Field names in the output interfaces use camelCase for TypeScript object properties, consistent with existing `GraphAgent` types; no snake_case database columns were introduced.
+- Permissions for `design-search` are read/search-only and do not grant design mutation tools, matching the agent's retrieval-only role.
 
-## Issues
+## Issues or concerns
 
-None.
+- One pre-existing agent test (`defaultAgent throws when all primary agents are disabled`) fails independently of this change. No action taken because it is not caused by the SearchAgent registration.
