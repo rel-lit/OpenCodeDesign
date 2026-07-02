@@ -1,11 +1,28 @@
 import { describe, expect } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Layer } from "effect"
 import { testEffect } from "../lib/effect"
 import { Design } from "../../src/design/design"
+import { DesignAgentLlm } from "../../src/design/agent/llm"
+import { GraphAgent } from "../../src/design/agent/graph"
+import { DesignStore } from "../../src/design/store/store"
 import { InstanceStore } from "../../src/project/instance-store"
 import { TestInstance } from "../fixture/fixture"
 
-const it = testEffect(Design.defaultLayer)
+const mockLlmLayer = Layer.succeed(
+  DesignAgentLlm.Service,
+  DesignAgentLlm.Service.of({
+    generateObject: () => Effect.succeed({ object: {} }),
+  }),
+)
+
+const mockGraphAgentLayer = GraphAgent.layer.pipe(Layer.provide(mockLlmLayer))
+
+const testLayer = Design.layer().pipe(
+  Layer.provide(DesignStore.defaultLayer),
+  Layer.provide(mockGraphAgentLayer),
+)
+
+const it = testEffect(testLayer)
 
 describe("Design.Service", () => {
   it.instance("persists nodes and edges across reload", () =>

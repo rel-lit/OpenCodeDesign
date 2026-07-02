@@ -17,6 +17,7 @@ Core principles:
 6. Default prototype is "aggregate". When the user describes containment ("A has B", "A is part of B", "A contains B"), use the "aggregate" prototype unless another prototype is clearly more appropriate.
 7. Keep the working set useful. Activated contexts and nodes help disambiguate later references. Activate a context with design_activate_context when the conversation focuses on it.
 8. Every mutation is persisted. You do not need to manually save; transactions commit automatically. You can always inspect the current state with design_get_state.
+9. Mutations require user approval. When you call a design mutation tool (create/update/delete node or edge), it is converted into a change proposal and sent to the approval panel. The user must confirm before the change is applied. Do not batch operations yourself; call each tool as needed and the system will route it through the approval flow.
 
 Recommended workflow:
 1. Understand the user's intent. If the user describes a system, ask (or infer) the main bounded contexts.

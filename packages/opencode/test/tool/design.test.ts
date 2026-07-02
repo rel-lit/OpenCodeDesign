@@ -3,6 +3,10 @@ import { Effect, Layer } from "effect"
 import { testEffect } from "../lib/effect"
 import { Design } from "../../src/design/design"
 import { DesignTypes } from "../../src/design/core/types"
+import * as GraphAgentTypes from "../../src/design/agent/types"
+import { GraphAgent } from "../../src/design/agent/graph"
+import { DesignStore } from "../../src/design/store/store"
+import { ApprovalPanel } from "../../src/design/approval-panel"
 import {
   DesignActivateContextTool,
   DesignActivateNodeTool,
@@ -33,6 +37,78 @@ import { Agent } from "../../src/agent/agent"
 import { Truncate } from "@/tool/truncate"
 import { MessageID, SessionID } from "../../src/session/schema"
 
+const autoConfirmPanel = (): ApprovalPanel.Interface => {
+  const panel = ApprovalPanel.make()
+  const originalPropose = panel.propose
+  return {
+    ...panel,
+    propose: (proposal) => {
+      originalPropose(proposal)
+      panel.confirm()
+    },
+  }
+}
+
+const mockGraphAgentLayer = Layer.succeed(
+  GraphAgent.Service,
+  GraphAgent.Service.of({
+    analyze: (input) =>
+      Effect.succeed({
+        type: "change-proposal" as const,
+        summary: "proposed",
+        affectedNodes: [],
+        affectedEdges: [],
+        delta: input.proposedChange,
+      }),
+    execute: (proposal) =>
+      Effect.gen(function* () {
+        const design = yield* Design.Service
+        const delta = proposal.delta
+        if (!delta) return { ...proposal, type: "change-applied" as const }
+        yield* design.transaction(
+          Effect.gen(function* () {
+            for (const node of delta.addNodes ?? []) {
+              yield* design.createNode({
+                id: node.id,
+                name: node.name,
+                contextId: node.contextId,
+                defaultSemantics: node.defaultSemantics,
+                aliases: [...node.aliases],
+              })
+            }
+            for (const update of delta.updateNodes ?? []) {
+              yield* design.updateNode(update.id, update.patch)
+            }
+            for (const id of delta.deleteNodeIds ?? []) {
+              yield* design.deleteNode(id)
+            }
+            for (const edge of delta.addEdges ?? []) {
+              yield* design.createEdge({
+                leftNodeId: edge.leftNodeId,
+                rightNodeId: edge.rightNodeId,
+                prototypeId: edge.prototypeId,
+                parameters: { ...edge.parameters },
+              })
+            }
+            for (const update of delta.updateEdges ?? []) {
+              yield* design.updateEdge(update.leftNodeId, update.rightNodeId, update.patch)
+            }
+            for (const key of delta.deleteEdgeKeys ?? []) {
+              const [left, right] = key.split("::")
+              if (left && right) yield* design.deleteEdge(left, right)
+            }
+          }),
+        )
+        return { ...proposal, type: "change-applied" as const }
+      }),
+  }),
+)
+
+const testDesignLayer = Design.layer({ makeApprovalPanel: autoConfirmPanel }).pipe(
+  Layer.provide(DesignStore.defaultLayer),
+  Layer.provide(mockGraphAgentLayer),
+)
+
 const makeCtx = () => ({
   sessionID: SessionID.descending(),
   messageID: MessageID.ascending(),
@@ -47,7 +123,7 @@ const makeCtx = () => ({
   },
 })
 
-const it = testEffect(Layer.mergeAll(Truncate.defaultLayer, Agent.defaultLayer, Design.defaultLayer))
+const it = testEffect(Layer.mergeAll(Truncate.defaultLayer, Agent.defaultLayer, testDesignLayer))
 
 describe("Design tools", () => {
   it.instance("create_context and create_node", () =>
@@ -257,6 +333,77 @@ describe("Design tools", () => {
       yield* (yield* Tool.init(resolveTool)).execute({ reference: "船" }, ctx)
       const result = yield* (yield* Tool.init(stateTool)).execute({}, ctx)
       expect((result.metadata.state as DesignTypes.GraphState).nodes.length).toBe(1)
+    }),
+  )
+
+  it.instance("proposeChanges routes multi-operation delta through GraphAgent analyze and execute after approval", () =>
+    Effect.gen(function* () {
+      const analyzed: GraphAgentTypes.Input[] = []
+      const executed: GraphAgentTypes.Output[] = []
+
+      const trackingMockGraphAgent = GraphAgent.Service.of({
+        analyze: (input) => {
+          analyzed.push(input)
+          return Effect.succeed({
+            type: "change-proposal" as const,
+            summary: "multi-op",
+            affectedNodes: ["node-existing", "node-new"],
+            affectedEdges: [],
+            delta: input.proposedChange,
+          })
+        },
+        execute: (proposal) => {
+          executed.push(proposal)
+          return Effect.succeed({ ...proposal, type: "change-applied" as const })
+        },
+      })
+
+      const trackingLayer = Design.layer({ makeApprovalPanel: autoConfirmPanel }).pipe(
+        Layer.provide(DesignStore.defaultLayer),
+        Layer.provide(Layer.succeed(GraphAgent.Service, trackingMockGraphAgent)),
+      )
+
+      const result = yield* Effect.gen(function* () {
+        const design = yield* Design.Service
+        yield* design.createContext({ id: "ctx-core", name: "Core" })
+        yield* design.createNode({ id: "node-existing", name: "Existing", contextId: "ctx-core" })
+
+        const delta: GraphAgentTypes.GraphDelta = {
+          addNodes: [{
+            id: "node-new",
+            name: "NewNode",
+            contextId: "ctx-core",
+            aliases: [],
+            defaultSemantics: "",
+            connectedEdges: [],
+            createdAt: 0,
+            updatedAt: 0,
+            retired: false,
+          }],
+          updateNodes: [{ id: "node-existing", patch: { name: "Renamed" } }],
+        }
+
+        return yield* design.proposeChanges(delta)
+      }).pipe(Effect.provide(trackingLayer))
+
+      expect(analyzed.length).toBe(1)
+      expect(analyzed[0].proposedChange).toEqual({
+        addNodes: [{
+          id: "node-new",
+          name: "NewNode",
+          contextId: "ctx-core",
+          aliases: [],
+          defaultSemantics: "",
+          connectedEdges: [],
+          createdAt: 0,
+          updatedAt: 0,
+          retired: false,
+        }],
+        updateNodes: [{ id: "node-existing", patch: { name: "Renamed" } }],
+      })
+      expect(executed.length).toBe(1)
+      expect(executed[0].type).toBe("change-proposal")
+      expect(result.type).toBe("change-applied")
     }),
   )
 })

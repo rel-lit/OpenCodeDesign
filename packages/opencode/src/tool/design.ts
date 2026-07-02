@@ -1,6 +1,8 @@
 import { Effect, Schema } from "effect"
 import * as Tool from "./tool"
 import { Design } from "@/design/design"
+import * as GraphAgentTypes from "@/design/agent/types"
+import { DesignTypes } from "@/design/core/types"
 
 const ResolveReferenceParameters = Schema.Struct({
   reference: Schema.String.annotate({ description: "The concept name or alias to resolve" }),
@@ -175,16 +177,26 @@ export const DesignCreateNodeTool = Tool.define<
       parameters: CreateNodeParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const node = yield* design.createNode({
-            name: args.name,
-            contextId: args.contextId,
-            defaultSemantics: args.defaultSemantics,
-            aliases: args.aliases ? [...args.aliases] : undefined,
-          })
+          const nodeId = crypto.randomUUID()
+          const delta: GraphAgentTypes.GraphDelta = {
+            addNodes: [{
+              id: nodeId,
+              name: args.name,
+              contextId: args.contextId,
+              aliases: args.aliases ? [...args.aliases] : [],
+              defaultSemantics: args.defaultSemantics ?? "",
+              connectedEdges: [],
+              createdAt: 0,
+              updatedAt: 0,
+              retired: false,
+            }],
+          }
+          const result = yield* design.proposeChanges(delta)
+          const created = result.delta?.addNodes?.[0]
           return {
-            title: `Created node ${node.name}`,
-            output: `Node ${node.name} (${node.id}) in context ${node.contextId}`,
-            metadata: { nodeId: node.id },
+            title: `Created node ${created?.name ?? args.name}`,
+            output: `Node ${created?.name ?? args.name} (${created?.id ?? nodeId}) in context ${args.contextId}`,
+            metadata: { nodeId: created?.id ?? nodeId },
           }
         }).pipe(Effect.orDie),
     }
@@ -239,22 +251,21 @@ export const DesignUpdateNodeTool = Tool.define<
       parameters: UpdateNodeParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const input: {
-            name?: string
-            defaultSemantics?: string
-            aliases?: string[]
-            contextId?: string
-          } = {}
-          if (args.name !== undefined) input.name = args.name
-          if (args.defaultSemantics !== undefined) input.defaultSemantics = args.defaultSemantics
-          if (args.aliases !== undefined) input.aliases = [...args.aliases]
-          if (args.contextId !== undefined) input.contextId = args.contextId
-          const node = yield* design.updateNode(args.id, input)
-          const semanticsPart = node.defaultSemantics ? `; semantics: ${node.defaultSemantics}` : ""
+          const patch = {} as Record<string, unknown>
+          if (args.name !== undefined) patch.name = args.name
+          if (args.defaultSemantics !== undefined) patch.defaultSemantics = args.defaultSemantics
+          if (args.aliases !== undefined) patch.aliases = [...args.aliases]
+          if (args.contextId !== undefined) patch.contextId = args.contextId
+          const delta: GraphAgentTypes.GraphDelta = {
+            updateNodes: [{ id: args.id, patch: patch as Partial<DesignTypes.Node> }],
+          }
+          const result = yield* design.proposeChanges(delta)
+          const updated = result.delta?.updateNodes?.[0]
+          const semanticsPart = updated?.patch.defaultSemantics ? `; semantics: ${updated.patch.defaultSemantics}` : ""
           return {
-            title: `Updated node ${node.name}`,
-            output: `Node ${node.name} (${node.id}) in context ${node.contextId}${semanticsPart}`,
-            metadata: { nodeId: node.id },
+            title: `Updated node ${updated?.patch.name ?? args.id}`,
+            output: `Node ${updated?.patch.name ?? args.id} (${args.id})${semanticsPart}`,
+            metadata: { nodeId: args.id },
           }
         }).pipe(Effect.orDie),
     }
@@ -279,11 +290,16 @@ export const DesignRetireNodeTool = Tool.define<
       parameters: RetireNodeParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const node = yield* design.retireNode(args.id, args.retired)
+          const delta: GraphAgentTypes.GraphDelta = {
+            updateNodes: [{ id: args.id, patch: { retired: args.retired } }],
+          }
+          const result = yield* design.proposeChanges(delta)
+          const updated = result.delta?.updateNodes?.[0]
+          const retired = updated?.patch.retired ?? args.retired
           return {
-            title: `${args.retired ? "Retired" : "Unretired"} node ${node.name}`,
-            output: `Node ${node.name} (${node.id})`,
-            metadata: { nodeId: node.id, retired: node.retired },
+            title: `${retired ? "Retired" : "Unretired"} node ${args.id}`,
+            output: `Node ${args.id}`,
+            metadata: { nodeId: args.id, retired },
           }
         }).pipe(Effect.orDie),
     }
@@ -307,7 +323,8 @@ export const DesignDeleteNodeTool = Tool.define<
       parameters: DeleteNodeParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          yield* design.deleteNode(args.id)
+          const delta: GraphAgentTypes.GraphDelta = { deleteNodeIds: [args.id] }
+          yield* design.proposeChanges(delta)
           return {
             title: "Deleted node",
             output: `Node ${args.id} and its connected edges removed.`,
@@ -371,16 +388,26 @@ export const DesignCreateEdgeTool = Tool.define<
       parameters: CreateEdgeParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const edge = yield* design.createEdge({
-            leftNodeId: args.leftNodeId,
-            rightNodeId: args.rightNodeId,
-            prototypeId: args.prototypeId,
-            parameters: args.parameters ?? {},
-          })
+          const delta: GraphAgentTypes.GraphDelta = {
+            addEdges: [{
+              leftNodeId: args.leftNodeId,
+              rightNodeId: args.rightNodeId,
+              prototypeId: args.prototypeId,
+              parameters: args.parameters ?? {},
+              createdAt: 0,
+              updatedAt: 0,
+            }],
+          }
+          const result = yield* design.proposeChanges(delta)
+          const edge = result.delta?.addEdges?.[0]
           return {
             title: `Created edge`,
-            output: `Edge ${edge.leftNodeId} --[${edge.prototypeId}]--> ${edge.rightNodeId}`,
-            metadata: { leftNodeId: edge.leftNodeId, rightNodeId: edge.rightNodeId, prototypeId: edge.prototypeId },
+            output: `Edge ${edge?.leftNodeId ?? args.leftNodeId} --[${edge?.prototypeId ?? args.prototypeId}]--> ${edge?.rightNodeId ?? args.rightNodeId}`,
+            metadata: {
+              leftNodeId: edge?.leftNodeId ?? args.leftNodeId,
+              rightNodeId: edge?.rightNodeId ?? args.rightNodeId,
+              prototypeId: edge?.prototypeId ?? args.prototypeId,
+            },
           }
         }).pipe(Effect.orDie),
     }
@@ -409,14 +436,29 @@ export const DesignUpdateEdgeTool = Tool.define<
       parameters: UpdateEdgeParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const edge = yield* design.updateEdge(args.leftNodeId, args.rightNodeId, {
-            prototypeId: args.prototypeId,
-            parameters: args.parameters,
-          })
+          const patch = {} as Record<string, unknown>
+          if (args.prototypeId !== undefined) patch.prototypeId = args.prototypeId
+          if (args.parameters !== undefined) patch.parameters = args.parameters
+          const delta: GraphAgentTypes.GraphDelta = {
+            updateEdges: [{
+              leftNodeId: args.leftNodeId,
+              rightNodeId: args.rightNodeId,
+              patch: patch as Partial<DesignTypes.Edge>,
+            }],
+          }
+          yield* design.proposeChanges(delta)
+          const edges = yield* design.listEdges()
+          const edge = edges.find(
+            (e) => e.leftNodeId === args.leftNodeId && e.rightNodeId === args.rightNodeId,
+          )
           return {
             title: `Updated edge`,
-            output: `Edge ${edge.leftNodeId} --[${edge.prototypeId}]--> ${edge.rightNodeId}`,
-            metadata: { leftNodeId: edge.leftNodeId, rightNodeId: edge.rightNodeId, prototypeId: edge.prototypeId },
+            output: `Edge ${args.leftNodeId} --[${edge?.prototypeId ?? args.prototypeId}]--> ${args.rightNodeId}`,
+            metadata: {
+              leftNodeId: args.leftNodeId,
+              rightNodeId: args.rightNodeId,
+              prototypeId: edge?.prototypeId ?? args.prototypeId,
+            },
           }
         }).pipe(Effect.orDie),
     }
@@ -441,7 +483,10 @@ export const DesignDeleteEdgeTool = Tool.define<
       parameters: DeleteEdgeParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          yield* design.deleteEdge(args.leftNodeId, args.rightNodeId)
+          const delta: GraphAgentTypes.GraphDelta = {
+            deleteEdgeKeys: [DesignTypes.edgeKey(args.leftNodeId, args.rightNodeId)],
+          }
+          yield* design.proposeChanges(delta)
           return {
             title: "Deleted edge",
             output: `Edge ${args.leftNodeId} <-> ${args.rightNodeId} removed.`,

@@ -3,6 +3,7 @@ import { Effect, Layer } from "effect"
 import { GraphAgent } from "@/design/agent/graph"
 import { DesignAgentLlm } from "@/design/agent/llm"
 import { Design } from "@/design/design"
+import { DesignStore } from "@/design/store/store"
 import { DesignTypes } from "@/design/core/types"
 import * as GraphAgentTypes from "@/design/agent/types"
 import { testEffect } from "../../lib/effect"
@@ -16,7 +17,14 @@ const mockLlmLayer = Layer.succeed(
 
 const graphAgentLayer = GraphAgent.layer.pipe(Layer.provide(mockLlmLayer))
 
-const it = testEffect(Layer.merge(graphAgentLayer, Design.defaultLayer))
+const designLayer = Design.layer().pipe(
+  Layer.provide(DesignStore.defaultLayer),
+  Layer.provide(graphAgentLayer),
+)
+
+const testLayer = Layer.merge(designLayer, graphAgentLayer)
+
+const it = testEffect(testLayer)
 
 describe("GraphAgent execute", () => {
   it.instance("applies a node update via Design.Service", () =>

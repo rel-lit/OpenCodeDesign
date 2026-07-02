@@ -7,6 +7,10 @@ import { WorkingSet } from "./core/working-set"
 import { EventLog } from "./core/event-log"
 import { DesignTypes } from "./core/types"
 import { DesignStore } from "./store/store"
+import { GraphAgent } from "./agent/graph"
+import * as GraphAgentTypes from "./agent/types"
+import { ApprovalPanel } from "./approval-panel"
+import { Provider } from "@/provider/provider"
 
 export interface Interface {
   readonly createContext: GraphEngine.Interface["createContext"]
@@ -34,6 +38,13 @@ export interface Interface {
   readonly getState: () => Effect.Effect<DesignTypes.GraphState>
   readonly init: () => Effect.Effect<void>
   readonly transaction: <A, E>(effect: Effect.Effect<A, E>) => Effect.Effect<A, E>
+  readonly proposeChanges: (
+    delta: GraphAgentTypes.GraphDelta,
+    panel?: ApprovalPanel.Interface,
+  ) => Effect.Effect<
+    GraphAgentTypes.Output,
+    GraphEngine.GraphEngineError | GraphAgent.NoDeltaError | Provider.DefaultModelError
+  >
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Design") {}
@@ -45,10 +56,17 @@ type DesignState = {
   readonly store: DesignStore.Store
 }
 
-export const layer = Layer.effect(
-  Service,
-  Effect.gen(function* () {
-    const designStore = yield* DesignStore.Service
+export type LayerOptions = {
+  readonly makeApprovalPanel?: () => ApprovalPanel.Interface
+}
+
+export const layer = (options?: LayerOptions) =>
+  Layer.effect(
+    Service,
+    Effect.gen(function* () {
+      const designStore = yield* DesignStore.Service
+      const graphAgent = yield* GraphAgent.Service
+      const makeApprovalPanel = options?.makeApprovalPanel ?? ApprovalPanel.make
 
     const designState = yield* InstanceState.make<DesignState, never, Scope.Scope>(
       Effect.fn("Design.state")(function* () {
@@ -307,7 +325,51 @@ export const layer = Layer.effect(
     const transaction = <A, E>(effect: Effect.Effect<A, E>) =>
       use((state) => state.store.transaction(() => effect))
 
-    return Service.of({
+    let self!: Interface
+
+    const proposeChanges = Effect.fn("Design.proposeChanges")(
+      (delta: GraphAgentTypes.GraphDelta, panel?: ApprovalPanel.Interface) =>
+        Effect.gen(function* () {
+          const state = yield* getState()
+          const activeWs = yield* use((s) => s.workingSet.list())
+          const input: GraphAgentTypes.Input = {
+            source: "chat",
+            userInput: "",
+            temporaryWorkingSet: {
+              contextIds: state.contexts.map((ctx) => ctx.id),
+              nodeIds: state.nodes.map((node) => node.id),
+              edgeKeys: state.edges.map((edge) => DesignTypes.edgeKey(edge.leftNodeId, edge.rightNodeId)),
+              systemAnalysis: {
+                conflictingRelations: [],
+                duplicateNodeCandidates: [],
+                orphanNodes: [],
+                invalidPrototypeUsage: [],
+              },
+              expandedByGraphAgent: {
+                contextIds: [],
+                nodeIds: [],
+                edgeKeys: [],
+                reason: "",
+              },
+            },
+            activeWorkingSet: {
+              contextIds: activeWs.contextIds,
+              nodeIds: activeWs.nodeIds,
+              capacity: 20,
+            },
+            graphState: state,
+            proposedChange: delta,
+          }
+          const proposal = yield* graphAgent.analyze(input)
+          if (proposal.type !== "change-proposal") return proposal
+          const approvalPanel = panel ?? makeApprovalPanel()
+          approvalPanel.propose(proposal)
+          const approved = yield* approvalPanel.awaitConfirmation()
+          return yield* graphAgent.execute(approved).pipe(Effect.provideService(Service, self as Interface))
+        }),
+    )
+
+    self = Service.of({
       createContext,
       listContexts,
       getContext,
@@ -333,11 +395,17 @@ export const layer = Layer.effect(
       getState,
       init,
       transaction,
+      proposeChanges,
     })
+
+    return self
   }),
 )
 
-export const defaultLayer = layer.pipe(Layer.provide(DesignStore.defaultLayer))
+export const defaultLayer = layer().pipe(
+  Layer.provide(DesignStore.defaultLayer),
+  Layer.provide(GraphAgent.defaultLayer),
+)
 
 export const node = LayerNode.make({
   service: Service,

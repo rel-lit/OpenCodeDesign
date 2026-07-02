@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Effect } from "effect"
 import { ApprovalPanel } from "@/design/approval-panel"
 
 const sampleProposal = {
@@ -81,5 +82,34 @@ describe("ApprovalPanel", () => {
   test("done throws when not executing", () => {
     const panel = ApprovalPanel.make()
     expect(() => panel.done()).toThrow("Cannot done when not executing")
+  })
+
+  test("awaitConfirmation resolves after confirm", async () => {
+    const panel = ApprovalPanel.make()
+    const proposal = { type: "change-proposal" as const, summary: "rename", affectedNodes: [] as string[], affectedEdges: [] as string[] }
+    panel.propose(proposal)
+    const promise = Effect.runPromise(panel.awaitConfirmation())
+    panel.confirm()
+    const result = await promise
+    expect(result).toBe(proposal)
+  })
+
+  test("awaitConfirmation resolves after force", async () => {
+    const panel = ApprovalPanel.make()
+    const proposal = { type: "change-proposal" as const, summary: "rename", affectedNodes: [] as string[], affectedEdges: [] as string[] }
+    panel.propose(proposal)
+    const promise = Effect.runPromise(panel.awaitConfirmation())
+    panel.force()
+    const result = await promise
+    expect(result).toBe(proposal)
+  })
+
+  test("awaitConfirmation rejects after reject", async () => {
+    const panel = ApprovalPanel.make()
+    const proposal = { type: "change-proposal" as const, summary: "rename", affectedNodes: [] as string[], affectedEdges: [] as string[] }
+    panel.propose(proposal)
+    const promise = Effect.runPromise(panel.awaitConfirmation())
+    panel.reject("too risky")
+    await expect(promise).rejects.toThrow("too risky")
   })
 })
