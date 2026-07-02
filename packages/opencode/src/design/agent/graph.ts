@@ -1,7 +1,6 @@
 import { Context, Effect, Layer } from "effect"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import * as GraphAgentTypes from "./types"
-import PROMPT_GRAPH from "./prompt/graph.txt"
 
 export interface Interface {
   readonly analyze: (input: GraphAgentTypes.Input) => Effect.Effect<GraphAgentTypes.Output>

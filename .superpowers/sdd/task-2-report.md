@@ -72,3 +72,36 @@ Ran 1 test across 1 file. [4.30s]
 ## Issues or concerns
 
 - The current implementation is a pure skeleton that ignores the input graph state and simply echoes the proposed change. This matches the task scope, but the actual graph-analysis logic will need to be added in a later task.
+
+## Reviewer Findings
+
+- Important: test/design/agent/graph.test.ts:41 only asserts program exists; must run program and assert output.
+- Minor: src/design/agent/graph.ts:4 imports PROMPT_GRAPH but never uses it.
+- Minor: src/agent/agent.ts duplicates design-tool permission block.
+
+## Fix Report
+
+### What I changed
+
+1. `test/design/agent/graph.test.ts` — Replaced the shallow assertion with a real Effect test using `testEffect(GraphAgent.layer)`. The test now yields `GraphAgent.Service`, calls `analyze(input)`, and asserts:
+   - `output.type === "change-proposal"`
+   - `output.summary` contains the user input
+   - `output.affectedNodes` matches the working-set node IDs
+   - `output.affectedEdges` is empty
+   - `output.delta` equals the proposed change
+
+2. `src/design/agent/graph.ts` — Removed the unused `PROMPT_GRAPH` import.
+
+3. `src/agent/agent.ts` — Extracted a shared `designToolPermissions` constant using `Permission.fromConfig(...)`, then reused it in both the `design-graph` subagent and the `design` primary agent. No behavior change; just eliminates duplication.
+
+### Test commands and results
+
+- `bun test test/design/agent/graph.test.ts` — 1 pass, 0 fail, 5 expect() calls
+- `bun run typecheck` — no errors (`$ tsgo --noEmit`)
+- `bun test test/design` — 28 pass, 0 fail, 67 expect() calls
+
+### Remaining concerns
+
+- The GraphAgent implementation remains a skeleton that echoes the proposed change. The fix only makes the test exercise and assert the skeleton contract; the real graph-analysis logic is still future work.
+
+
