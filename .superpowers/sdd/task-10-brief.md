@@ -1,79 +1,73 @@
-### Task 10: End-to-end validation
+# Task 10: 整合预处理流程到 Design 服务
 
 **Files:**
-- None (verification only).
+- Modify: `src/design/design.ts`
+- Modify: `src/design/system/preprocessor.ts`
+- Test: `test/design/design-preprocess.test.ts`
 
-**Why:** We must confirm that entering Design mode in the TUI actually creates `.opencode/design/design.sqlite`, writes nodes/edges, and reloads them on next instance load.
+**Interfaces:**
+- Consumes: raw user input
+- Produces: processed input text, enriched input from GraphAgent
 
-- [ ] **Step 1: Build the binary**
+- [ ] **Step 1: Write the failing test**
+
+```typescript
+test("preprocess returns processed input for ChatAgent", async () => {
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      const design = yield* Design.Service
+      return yield* design.preprocessInput("修改 @UserService")
+    }).pipe(Effect.provide(/* test layers */))
+  )
+  expect(result.processedText).toContain("节点 ID")
+})
+```
+
+- [ ] **Step 2: Implement preprocessInput in Design.Service**
+
+```typescript
+preprocessInput: (input: string) => Effect.Effect<{
+  processedText: string
+  temporaryWorkingSet: GraphAgentTypes.TemporaryWorkingSet
+  enriched?: GraphAgentTypes.Output
+}>
+```
+
+实现：
+1. 获取当前图状态、活跃工作集。
+2. `@` 展开。
+3. 计算临时工作集。
+4. 系统辅助分析。
+5. 阈值判断：若触发，调用 GraphAgent.analyze 返回 enriched input。
+6. 生成 processedText。
+
+注意：阈值判断可以先用简单启发式（输入包含 `@`、临时工作集非空、输入长度等）。后续可细化。
+
+- [ ] **Step 3: Run test to verify it passes**
+
+Run: `bun test test/design/design-preprocess.test.ts`
+Expected: PASS
+
+- [ ] **Step 4: Commit**
 
 ```bash
-cd packages/opencode
-bun run build --single
+git commit -m "feat(design): integrate system preprocessor into Design.Service"
 ```
 
-Expected: build succeeds.
+## Global Constraints
 
-- [ ] **Step 2: Run Design mode in a temp project**
+- 仅面向 Windows 桌面端 GUI；CLI 与 Web 不在范围内。
+- 不替换现有 `Design.Service` 和 SQLite 存储层。
+- 使用 Effect `Effect.gen` 和 `Effect.fn`；遵循 `src/effect/instance-state.ts` 进行 per-project 状态隔离。
+- 模块组织使用 flat top-level exports + `export * as Namespace from "./file"`；禁止使用 `export namespace Foo`。
+- 字段/列名使用 snake_case。
+- 避免 `try`/`catch`，优先使用 Effect 错误通道。
+- 测试从 `packages/opencode` 目录运行；不使用 root 运行测试。
+- 类型检查使用 `bun run typecheck` from `packages/opencode`。
 
-```bash
-mkdir -p /tmp/design-e2e
-cd /tmp/design-e2e
-D:\RLDemos\OpenCodeDesign\packages\opencode\dist\opencode.exe --agent design
-```
+## Dependencies from Previous Tasks
 
-In the TUI, run:
-
-```
-创建一个上下文叫 战斗系统
-创建节点 船 在 战斗系统
-创建节点 生命值 在 战斗系统
-连接 船 和 生命值 使用 聚合
-```
-
-Exit the TUI.
-
-- [ ] **Step 3: Inspect SQLite file**
-
-```bash
-ls .opencode/design/design.sqlite
-sqlite3 .opencode/design/design.sqlite "SELECT * FROM design_nodes;"
-sqlite3 .opencode/design/design.sqlite "SELECT * FROM design_edges;"
-sqlite3 .opencode/design/design.sqlite "SELECT * FROM design_events;"
-```
-
-Expected: `design.sqlite` exists and contains the nodes, edge, and events.
-
-- [ ] **Step 4: Re-enter Design mode and verify reload**
-
-```bash
-D:\RLDemos\OpenCodeDesign\packages\opencode\dist\opencode.exe --agent design
-```
-
-Run `design_list_nodes`. Expected: both `船` and `生命值` are listed.
-
-- [ ] **Step 5: Run full design test suite**
-
-```bash
-cd D:\RLDemos\OpenCodeDesign\packages\opencode
-bun test test/design
-```
-
-Expected: all tests pass.
-
-- [ ] **Step 6: Run full typecheck**
-
-```bash
-cd D:\RLDemos\OpenCodeDesign\packages\opencode
-bun turbo typecheck
-```
-
-Expected: all packages typecheck.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git commit --allow-empty -m "chore(design): verify native SQLite integration e2e"
-```
-
----
+- `Preprocessor.expandAtReferences` in `src/design/system/preprocessor.ts`
+- `WorkingSetComputer.fromInput` in `src/design/system/working-set-computer.ts`
+- `SystemAnalyzer.analyze` in `src/design/system/analyzer.ts`
+- `GraphAgent.Service` in `src/design/agent/graph.ts`

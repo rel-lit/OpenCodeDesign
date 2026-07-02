@@ -9,6 +9,9 @@ import { DesignTypes } from "./core/types"
 import { DesignStore } from "./store/store"
 import { GraphAgent } from "./agent/graph"
 import * as GraphAgentTypes from "./agent/types"
+import { Preprocessor } from "./system/preprocessor"
+import { WorkingSetComputer } from "./system/working-set-computer"
+import { SystemAnalyzer } from "./system/analyzer"
 import { ApprovalPanel } from "./approval-panel"
 import { Provider } from "@/provider/provider"
 
@@ -44,6 +47,14 @@ export interface Interface {
   ) => Effect.Effect<
     GraphAgentTypes.Output,
     GraphEngine.GraphEngineError | GraphAgent.NoDeltaError | Provider.DefaultModelError
+  >
+  readonly preprocessInput: (input: string) => Effect.Effect<
+    {
+      processedText: string
+      temporaryWorkingSet: GraphAgentTypes.TemporaryWorkingSet
+      enriched?: GraphAgentTypes.Output
+    },
+    Provider.DefaultModelError
   >
 }
 
@@ -322,6 +333,43 @@ export const layer = (options?: LayerOptions) =>
       yield* Effect.logInfo("design state initialized")
     })
 
+    const shouldEnrich = (input: string, tws: GraphAgentTypes.TemporaryWorkingSet): boolean =>
+      input.includes("@") && tws.nodeIds.length > 0
+
+    const preprocessInput = Effect.fn("Design.preprocessInput")((input: string) =>
+      use((state) =>
+        Effect.gen(function* () {
+          const graphState = yield* state.graph.getState()
+          const activeWs = yield* state.workingSet.state()
+          const activeWorkingSet: GraphAgentTypes.ActiveWorkingSet = {
+            contextIds: [...activeWs.activeContextIds],
+            nodeIds: [...activeWs.activeNodeIds],
+            capacity: activeWs.capacity,
+          }
+          const expanded = Preprocessor.expandAtReferences(input, graphState)
+          const temporaryWorkingSet = WorkingSetComputer.fromInput(input, activeWorkingSet, graphState)
+          const analyzed = SystemAnalyzer.analyze(temporaryWorkingSet, graphState)
+          const enriched = yield* shouldEnrich(input, analyzed)
+            ? graphAgent.analyze({
+                source: "chat",
+                userInput: input,
+                temporaryWorkingSet: analyzed,
+                activeWorkingSet,
+                graphState,
+              })
+            : Effect.succeed(undefined)
+          const processedText = Preprocessor.buildProcessedText(expanded, analyzed, enriched)
+          const result: {
+            processedText: string
+            temporaryWorkingSet: GraphAgentTypes.TemporaryWorkingSet
+            enriched?: GraphAgentTypes.Output
+          } = { processedText, temporaryWorkingSet: analyzed }
+          if (enriched !== undefined) result.enriched = enriched
+          return result
+        }),
+      ),
+    )
+
     const transaction = <A, E>(effect: Effect.Effect<A, E>) =>
       use((state) => state.store.transaction(() => effect))
 
@@ -396,6 +444,7 @@ export const layer = (options?: LayerOptions) =>
       init,
       transaction,
       proposeChanges,
+      preprocessInput,
     })
 
     return self
