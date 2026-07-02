@@ -118,6 +118,7 @@ export const layer = Layer.effect(
             }
           }),
         )
+        yield* design.bumpVersion("chat-agent")
         return { ...proposal, type: "change-applied" as const }
       },
     )

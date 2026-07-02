@@ -12,6 +12,7 @@ import * as GraphAgentTypes from "./agent/types"
 import { Preprocessor } from "./system/preprocessor"
 import { WorkingSetComputer } from "./system/working-set-computer"
 import { SystemAnalyzer } from "./system/analyzer"
+import { VersionSync } from "./system/version-sync"
 import { ApprovalPanel } from "./approval-panel"
 import { Provider } from "@/provider/provider"
 import { PlanHandoff } from "./plan-handoff"
@@ -65,6 +66,9 @@ export interface Interface {
     void,
     GraphEngine.GraphEngineError
   >
+  readonly getCurrentVersion: VersionSync.Interface["getCurrentVersion"]
+  readonly bumpVersion: VersionSync.Interface["bumpVersion"]
+  readonly refreshChatAgentContext: VersionSync.Interface["refreshChatAgentContext"]
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Design") {}
@@ -73,6 +77,7 @@ type DesignState = {
   readonly graph: GraphEngine.Interface
   readonly workingSet: WorkingSet.Interface
   readonly eventLog: EventLog.Interface
+  readonly versionSync: VersionSync.Interface
   readonly store: DesignStore.Store
 }
 
@@ -97,6 +102,7 @@ export const layer = (options?: LayerOptions) =>
         const graph = yield* GraphEngine.makeEngine()
         const workingSet = yield* WorkingSet.makeWorkingSet(20)(graph)
         const eventLog = yield* EventLog.makeEventLog()
+        const versionSync = VersionSync.make(eventLog)
 
         if (loaded.nodes.length > 0 || loaded.contexts.length > 0) {
           for (const ctx of loaded.contexts) {
@@ -139,7 +145,7 @@ export const layer = (options?: LayerOptions) =>
           }
         }
 
-        return { graph, workingSet, eventLog, store }
+        return { graph, workingSet, eventLog, versionSync, store }
       }),
     )
 
@@ -387,6 +393,14 @@ export const layer = (options?: LayerOptions) =>
       designGraphSummary: string
     }) => Effect.succeed(PlanHandoff.build(input)))
 
+    const getCurrentVersion = Effect.fn("Design.getCurrentVersion")(() => use((state) => state.versionSync.getCurrentVersion()))
+    const bumpVersion = Effect.fn("Design.bumpVersion")((source: VersionSync.GraphVersion["source"]) =>
+      use((state) => state.versionSync.bumpVersion(source)),
+    )
+    const refreshChatAgentContext = Effect.fn("Design.refreshChatAgentContext")((version: VersionSync.GraphVersion) =>
+      use((state) => state.versionSync.refreshChatAgentContext(version)),
+    )
+
     const parseEdgeKey = (key: string): [string, string] => {
       const parts = key.split("::")
       return [parts[0], parts[1]]
@@ -508,6 +522,9 @@ export const layer = (options?: LayerOptions) =>
       preprocessInput,
       handoffToPlan,
       applyRawDelta,
+      getCurrentVersion,
+      bumpVersion,
+      refreshChatAgentContext,
     })
 
     return self

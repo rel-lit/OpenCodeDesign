@@ -69,6 +69,7 @@ export const layer = () =>
 
         return yield* Effect.gen(function* () {
           yield* design.applyRawDelta(delta)
+          yield* design.bumpVersion("visual-editor")
           const graphState = yield* design.getState()
           const activeWs = yield* design.listWorkingSet()
           const activeWorkingSet: GraphAgentTypes.ActiveWorkingSet = {
