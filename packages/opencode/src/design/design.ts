@@ -33,6 +33,7 @@ export interface Interface {
   readonly listWorkingSet: WorkingSet.Interface["list"]
   readonly getState: () => Effect.Effect<DesignTypes.GraphState>
   readonly init: () => Effect.Effect<void>
+  readonly transaction: <A, E>(effect: Effect.Effect<A, E>) => Effect.Effect<A, E>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Design") {}
@@ -303,6 +304,9 @@ export const layer = Layer.effect(
       yield* Effect.logInfo("design state initialized")
     })
 
+    const transaction = <A, E>(effect: Effect.Effect<A, E>) =>
+      use((state) => state.store.transaction(() => effect))
+
     return Service.of({
       createContext,
       listContexts,
@@ -328,6 +332,7 @@ export const layer = Layer.effect(
       listWorkingSet: () => use((state) => state.workingSet.list()),
       getState,
       init,
+      transaction,
     })
   }),
 )

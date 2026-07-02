@@ -4,8 +4,12 @@ import { Provider } from "@/provider/provider"
 import { Context, Effect, Layer, Schema } from "effect"
 import { DesignAgentLlm } from "./llm"
 import * as GraphAgentTypes from "./types"
+import { Design } from "@/design/design"
+import { GraphEngine } from "@/design/core/graph"
 
 import PROMPT_GRAPH from "./prompt/graph.txt"
+
+export class NoDeltaError extends Schema.TaggedErrorClass<NoDeltaError>()("GraphAgent.NoDeltaError", {}) {}
 
 const PatchNodeSchema = Schema.Record(Schema.String, Schema.Unknown)
 const PatchEdgeSchema = Schema.Record(Schema.String, Schema.Unknown)
@@ -49,7 +53,7 @@ const OutputSchema = Schema.Struct({
 
 export interface Interface {
   readonly analyze: (input: GraphAgentTypes.Input) => Effect.Effect<GraphAgentTypes.Output, Provider.DefaultModelError>
-  readonly execute: (proposal: GraphAgentTypes.Output) => Effect.Effect<GraphAgentTypes.Output>
+  readonly execute: (proposal: GraphAgentTypes.Output) => Effect.Effect<GraphAgentTypes.Output, NoDeltaError | GraphEngine.GraphEngineError, Design.Service>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/DesignGraphAgent") {}
@@ -73,6 +77,47 @@ export const layer = Layer.effect(
 
     const execute = Effect.fn("GraphAgent.execute")(
       function* (proposal: GraphAgentTypes.Output) {
+        if (!proposal.delta) return yield* new NoDeltaError()
+        const design = yield* Design.Service
+        const delta = proposal.delta
+        const parseEdgeKey = (key: string): [string, string] => {
+          const parts = key.split("::")
+          return [parts[0], parts[1]]
+        }
+        yield* design.transaction(
+          Effect.gen(function* () {
+            for (const node of delta.addNodes ?? []) {
+              yield* design.createNode({
+                id: node.id,
+                name: node.name,
+                contextId: node.contextId,
+                defaultSemantics: node.defaultSemantics,
+                aliases: [...node.aliases],
+              })
+            }
+            for (const update of delta.updateNodes ?? []) {
+              yield* design.updateNode(update.id, update.patch)
+            }
+            for (const id of delta.deleteNodeIds ?? []) {
+              yield* design.deleteNode(id)
+            }
+            for (const edge of delta.addEdges ?? []) {
+              yield* design.createEdge({
+                leftNodeId: edge.leftNodeId,
+                rightNodeId: edge.rightNodeId,
+                prototypeId: edge.prototypeId,
+                parameters: { ...edge.parameters },
+              })
+            }
+            for (const update of delta.updateEdges ?? []) {
+              yield* design.updateEdge(update.leftNodeId, update.rightNodeId, update.patch)
+            }
+            for (const key of delta.deleteEdgeKeys ?? []) {
+              const [leftNodeId, rightNodeId] = parseEdgeKey(key)
+              yield* design.deleteEdge(leftNodeId, rightNodeId)
+            }
+          }),
+        )
         return { ...proposal, type: "change-applied" as const }
       },
     )
