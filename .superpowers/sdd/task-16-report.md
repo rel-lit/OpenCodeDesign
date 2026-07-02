@@ -92,3 +92,23 @@ bun run typecheck
 ```
 
 Result: **PASS** (`$ tsgo --noEmit`).
+
+---
+
+## Verification Run (2026-07-02)
+
+Re-ran the design test suite and typecheck to confirm the deadlock fix.
+
+```bash
+bun test test/design test/tool/design.test.ts
+```
+
+Result: **74 pass, 0 fail** across 20 files.
+
+```bash
+bun run typecheck
+```
+
+Result: **PASS** (`$ tsgo --noEmit`).
+
+No additional code changes were required; the fix in commit `4b4fdc6f` already addresses the issue.
