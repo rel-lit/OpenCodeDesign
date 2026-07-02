@@ -1,29 +1,74 @@
-# Task 2 Report: Refactor WorkingSet into a reusable factory
+# Task 2 Report
 
-## What was implemented
+## What I implemented
 
-Refactored `packages/opencode/src/design/core/working-set.ts` to extract a reusable `makeWorkingSet` factory:
+- Created `src/design/agent/graph.ts` with the GraphAgent Effect service skeleton:
+  - `Service` tag `@opencode/DesignGraphAgent`
+  - `analyze(input)` returns a `change-proposal` output skeleton
+  - `execute(proposal)` returns a `change-applied` output skeleton
+  - `layer` and `defaultLayer` following the project’s service conventions
+  - Self-reexport `export * as GraphAgent from "./graph"`
+- Created `src/design/agent/prompt/graph.txt` with a minimal GraphAgent system prompt.
+- Modified `src/agent/agent.ts` to register a new native subagent `design-graph` using the same design-tool permissions as the existing `design` primary agent.
+- Created `test/design/agent/graph.test.ts` with a TDD test that exercises `GraphAgent.analyze`.
 
-- Replaced the previous `make = (capacity = 20) => Layer.effect(...)` helper with a pure factory `makeWorkingSet = (capacity = 20) => Effect.fn("WorkingSet.make")(function* (graph) { ... })`.
-- The factory receives a `GraphEngine.Interface` instance and returns a `WorkingSet.Interface` implementation, moving all state and methods (`state`, `list`, `activateContext`, `forgetContext`, `activateNode`, `forgetNode`, `resolveReference`) into the factory closure.
-- Rewrote the global `WorkingSet.Service` layer as a thin wrapper that yields `GraphEngine.Service`, builds a working set via `makeWorkingSet(20)(graph)`, and wraps it with `Service.of`.
-- Kept `defaultLayer` and the `LayerNode`/`node` wiring unchanged so existing consumers continue to work.
+## TDD Evidence
 
-## What was tested
+### RED (failing test)
 
-- Focused test: `bun test test/design/core/working-set.test.ts`
-  - 2 pass, 0 fail
-- Full design core suite: `bun test test/design/core`
-  - 20 pass, 0 fail
-- Typecheck: `bun typecheck`
-  - clean (`tsgo --noEmit`)
+Command: `bun test test/design/agent/graph.test.ts`
+
+```
+bun test v1.3.14 (0d9b296a)
+
+test\design\agent\graph.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+error: Cannot find module '@/design/agent/graph' from 'D:\RLDemos\OpenCodeDesign\packages\opencode\test\design\agent\graph.test.ts'
+-------------------------------
+
+ 0 pass
+ 1 fail
+ 1 error
+Ran 1 test across 1 file. [2.89s]
+```
+
+### GREEN (passing test)
+
+Command: `bun test test/design/agent/graph.test.ts`
+
+```
+bun test v1.3.14 (0d9b296a)
+
+test\design\agent\graph.test.ts:
+(pass) GraphAgent service > analyze returns change-proposal for trivial rename [0.15ms]
+
+ 1 pass
+ 0 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [4.30s]
+```
+
+## Full verification
+
+- Focused test: `bun test test/design/agent/graph.test.ts` — pass
+- Design suite: `bun test test/design` — 28 pass, 0 fail
+- Typecheck: `bun run typecheck` — no errors
 
 ## Files changed
 
-- `packages/opencode/src/design/core/working-set.ts`
+- `packages/opencode/src/design/agent/graph.ts` (new)
+- `packages/opencode/src/design/agent/prompt/graph.txt` (new)
+- `packages/opencode/src/agent/agent.ts` (modified)
+- `packages/opencode/test/design/agent/graph.test.ts` (new)
 
 ## Self-review findings
 
-- The refactor matches the brief exactly, including the curried factory signature and the thin global service layer.
-- All existing tests pass without modification, confirming the global `WorkingSet.Service` wrapper remains compatible.
-- No concerns.
+- The task brief’s skeleton used `Effect.map(Service.make)`, which does not exist on this codebase’s `Context.Service` class. I replaced it with the project-standard `Layer.effect(Service, ...)` + `Service.of(...)` pattern.
+- The task brief’s test fixture used `kind: "service"` and omitted required `Node` fields. I updated the fixture to match the actual `DesignTypes.Node` schema so the test typechecks while preserving the test’s intent (verifying `analyze` returns a defined Effect program).
+- The new subagent uses the same design-tool permission set as the existing `design` agent, keeping the security surface consistent.
+
+## Issues or concerns
+
+- The current implementation is a pure skeleton that ignores the input graph state and simply echoes the proposed change. This matches the task scope, but the actual graph-analysis logic will need to be added in a later task.

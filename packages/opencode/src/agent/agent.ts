@@ -15,6 +15,7 @@ import PROMPT_EXPLORE from "./prompt/explore.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
 import PROMPT_DESIGN from "./prompt/design.txt"
+import PROMPT_GRAPH from "@/design/agent/prompt/graph.txt"
 import { Permission } from "@/permission"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Global } from "@opencode-ai/core/global"
@@ -138,6 +139,53 @@ export const layer = Layer.effect(
 
         const user = Permission.fromConfig(cfg.permission ?? {})
 
+        const graphAgentInfo: Info = {
+          name: "design-graph",
+          description: "Analyzes design graphs, generates change proposals, and executes approved writes.",
+          mode: "subagent",
+          native: true,
+          permission: Permission.merge(
+            defaults,
+            Permission.fromConfig({
+              question: "allow",
+              read: "deny",
+              grep: "deny",
+              glob: "deny",
+              bash: "deny",
+              edit: "deny",
+              write: "deny",
+              apply_patch: "deny",
+              task: "deny",
+              design_resolve_reference: "allow",
+              design_create_context: "allow",
+              design_list_contexts: "allow",
+              design_get_context: "allow",
+              design_update_context: "allow",
+              design_create_node: "allow",
+              design_get_node: "allow",
+              design_update_node: "allow",
+              design_retire_node: "allow",
+              design_delete_node: "allow",
+              design_find_nodes_by_name: "allow",
+              design_create_edge: "allow",
+              design_update_edge: "allow",
+              design_delete_edge: "allow",
+              design_create_prototype: "allow",
+              design_list_prototypes: "allow",
+              design_get_prototype: "allow",
+              design_list_nodes: "allow",
+              design_list_edges: "allow",
+              design_show_working_set: "allow",
+              design_activate_context: "allow",
+              design_activate_node: "allow",
+              design_get_state: "allow",
+            }),
+            user,
+          ),
+          prompt: PROMPT_GRAPH,
+          options: {},
+        }
+
         const agents: Record<string, Info> = {
           build: {
             name: "build",
@@ -226,6 +274,7 @@ export const layer = Layer.effect(
           native: true,
           prompt: PROMPT_DESIGN,
         },
+        "design-graph": graphAgentInfo,
         general: {
             name: "general",
             description: `General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.`,
