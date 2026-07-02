@@ -1,40 +1,83 @@
-# Task 3 Report: Refactor EventLog into a reusable factory
+# Task 3 Report
 
-## What I implemented
+## What I Implemented
 
-- Extracted the in-memory event log implementation into a reusable factory, `makeEventLog`, in `packages/opencode/src/design/core/event-log.ts`.
-- `makeEventLog` is an `Effect.fn("EventLog.make")` that returns `{ append, rollbackTo, list }` satisfying `EventLog.Interface`.
-- Extended `EventLog.Interface.append` to accept an optional `id?: string` so events restored from SQLite can keep their original IDs.
-- Updated `append` to use `input.id ?? makeId()` when constructing the event node.
-- Rewrote the global `EventLog.Service` layer as a thin wrapper:
-  ```ts
-  const log = yield* makeEventLog()
-  return Service.of(log)
-  ```
-- Added a focused test verifying that a supplied `id` is preserved instead of generating a new one.
+Wired `GraphAgent.analyze()` to perform structured object generation via a mockable LLM helper layer.
 
-## What I tested and test results
+- Added `src/design/agent/llm.ts` exporting `DesignAgentLlm.Service` with a `generateObject` method.
+  - Default implementation resolves the configured provider/model through `Provider.Service`, then calls the `ai` SDK `generateObject` with an Effect schema converted to a standard schema + JSON schema.
+  - Returns `{ object: unknown }` so callers can cast to their domain type.
+- Updated `src/design/agent/graph.ts`:
+  - Defined `OutputSchema` (and `GraphDeltaSchema`) matching `GraphAgentTypes.Output`.
+  - `analyze` builds a prompt from `PROMPT_GRAPH` + JSON-serialized input, calls `DesignAgentLlm.generateObject`, and returns the structured result.
+  - `execute` remains as a no-op promotion to `change-applied`.
+  - `GraphAgent.defaultLayer` provides `DesignAgentLlm.defaultLayer`.
+- Updated `src/design/agent/prompt/graph.txt` to the task-specified GraphAgent prompt.
+- Updated `test/design/agent/graph.test.ts`:
+  - Replaced the hardcoded-expectation test with a deterministic mock layer (`Layer.succeed(DesignAgentLlm.Service, ...)`).
+  - The mock returns a specific `change-proposal`; the test asserts the output is exactly that structured object.
 
-- Ran focused test: `bun test test/design/core/event-log.test.ts`
-  - 3 pass, 0 fail
-- Ran full design core suite: `bun test test/design/core`
-  - 21 pass, 0 fail
-- Ran typecheck: `bun typecheck`
-  - Passed (`tsgo --noEmit`)
+## What I Tested and Test Results
 
-## Files changed
+- Wrote the failing test first; it failed because `src/design/agent/llm` did not exist.
+- Implemented the LLM wiring; the targeted test passed.
+- Ran the full design test suite:
+  - `28 pass, 0 fail, 67 expect() calls`
+- Ran typecheck from `packages/opencode`:
+  - `tsgo --noEmit` passed with no errors.
 
-- `packages/opencode/src/design/core/event-log.ts`
-- `packages/opencode/test/design/core/event-log.test.ts`
+## TDD Evidence
 
-## Self-review findings
+### RED
 
-- The spec item "optional `id` in `append`" is fully implemented and covered by a test.
-- Names follow the existing factory pattern (`makeEngine`, `makeWorkingSet`).
-- The global `EventLog.Service` remains a thin wrapper, preserving existing consumers.
-- The brief's pseudocode showed `yield* makeEventLog` without parentheses. I used `yield* makeEventLog()` to match the established `GraphEngine.makeEngine()` pattern and because `Effect.fn` returns a callable function.
-- No overbuilding: the factory is scoped to the existing interface and does not introduce persistence or instance state yet.
+Command:
 
-## Issues or concerns
+```bash
+bun test test/design/agent/graph.test.ts -t "analyze returns structured change-proposal"
+```
 
-- None blocking. The working tree contains unrelated changes (`.opencode/` deletions, `bun.lock`, etc.) that were left unstaged.
+Output:
+
+```
+error: Cannot find module '@/design/agent/llm' from 'D:\RLDemos\OpenCodeDesign\packages\opencode\test\design\agent\graph.test.ts'
+
+ 0 pass
+ 1 fail
+ 1 error
+```
+
+### GREEN
+
+Command:
+
+```bash
+bun test test/design/agent/graph.test.ts -t "analyze returns structured change-proposal"
+```
+
+Output:
+
+```
+(pass) GraphAgent service > analyze returns structured change-proposal [1.43ms]
+
+ 1 pass
+ 0 fail
+ 5 expect() calls
+```
+
+## Files Changed
+
+- `packages/opencode/src/design/agent/llm.ts` (new)
+- `packages/opencode/src/design/agent/graph.ts`
+- `packages/opencode/src/design/agent/prompt/graph.txt`
+- `packages/opencode/test/design/agent/graph.test.ts`
+- `packages/opencode/.superpowers/sdd/task-3-report.md` (this report)
+
+## Self-Review Findings
+
+- The `as Decoder<unknown>` cast in `llm.ts` is required because `Schema.toStandardSchemaV1` expects `Decoder<unknown, never>` and the widened `Schema<unknown>` interface carries `unknown` decoding services. This matches how `ai` SDK integration is done elsewhere in the codebase.
+- `GraphDeltaSchema` patch fields are typed as `Record<string, unknown>` rather than `Partial<Node>` / `Partial<Edge>`. This is slightly looser but keeps the LLM-output schema simple and avoids fighting Effect Schema's partial API; the resulting type is still assignable to `GraphDelta`.
+- All design tests pass and typecheck is clean.
+
+## Issues or Concerns
+
+None.
