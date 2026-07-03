@@ -4,6 +4,18 @@
 - The default branch in this repo is `dev`.
 - Local `main` ref may not exist; use `dev` or `origin/dev` for diffs.
 
+## Environment Constraints
+
+Unless explicitly stated otherwise, all subsequent implementation discussions, debugging, verification, and builds in this repo assume:
+
+- **Platform**: Windows x64 (this machine)
+- **Client**: Desktop GUI (`packages/desktop` + `packages/app`)
+- **Build command**: `bun run build --single` (Windows x64 single-platform build)
+- **Test directory**: `packages/opencode`
+- **Type check**: `bun run typecheck` (uses `tsgo`)
+
+Any topic involving Web, TUI, macOS/Linux, server-side, or mobile must be stated explicitly and verified separately.
+
 ## Branch Names
 
 Use a short branch name of at most three words, separated by hyphens. Do not use slashes or type prefixes such as `feat/` or `fix/`.
