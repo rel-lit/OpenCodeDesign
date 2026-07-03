@@ -653,9 +653,11 @@ export const layer = (options?: LayerOptions) =>
   }),
 )
 
-export const defaultLayer = layer().pipe(
-  Layer.provide(DesignStore.defaultLayer),
-  Layer.provide(GraphAgent.defaultLayer),
+export const defaultLayer = Layer.suspend(() =>
+  layer().pipe(
+    Layer.provide(DesignStore.defaultLayer),
+    Layer.provide(GraphAgent.defaultLayer),
+  ),
 )
 
 export const node = LayerNode.make({
