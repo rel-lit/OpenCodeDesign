@@ -42,4 +42,4 @@ $ tsgo --noEmit
 
 ## Commit hash
 
-`422cdf419`
+`2ab4d8a0f`
