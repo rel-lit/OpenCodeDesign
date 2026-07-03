@@ -1,152 +1,45 @@
 # Task 4 Report
 
-## What I implemented
+## Status
 
-- Implemented `GraphAgent.execute()` in `src/design/agent/graph.ts` so that an approved `change-proposal` output is applied to the design graph through `Design.Service`.
-- Added a `transaction` method to `Design.Service` in `src/design/design.ts` that wraps a block of design operations in `DesignStore.transaction`, giving the whole delta atomic persistence.
-- Added `GraphAgent.NoDeltaError` for proposals that arrive without a `delta`.
+Complete.
 
-### `GraphAgent.execute()` behavior
+`GraphAgent.execute` in `packages/opencode/src/design/agent/graph.ts` already delegates all database writes to `Design.applyRawDelta` and does not call `GraphEngine` directly. No production-code changes were required.
 
-1. Rejects proposals with no `delta` via `NoDeltaError`.
-2. Runs all delta operations inside `design.transaction`:
-   - `addNodes` → `design.createNode`
-   - `updateNodes` → `design.updateNode`
-   - `deleteNodeIds` → `design.deleteNode`
-   - `addEdges` → `design.createEdge`
-   - `updateEdges` → `design.updateEdge`
-   - `deleteEdgeKeys` → parsed with `DesignTypes.edgeKey` format (`left::right`) then `design.deleteEdge`
-3. Returns the proposal with `type` changed to `"change-applied"`.
+A new regression test exercising `GraphAgent.execute` with a minimal delta (omitting all system fields) was added, and an existing mixed-delta test was corrected so the full focused suite passes.
 
-## What I tested and test results
+## Commands run
 
-Created `test/design/agent/graph-execute.test.ts` with four cases:
+```bash
+bun test test/design/agent/graph.test.ts test/design/agent/graph-execute.test.ts
+bun run typecheck
+```
 
-1. `applies a node update via Design.Service` — verifies the result type and that the node name is updated in the DB.
-2. `applies mixed delta operations` — add node, update node, add edge, delete node in one proposal.
-3. `deletes an edge by key` — verifies `deleteEdgeKeys` parsing and removal.
-4. `fails when proposal has no delta` — verifies `NoDeltaError`.
+## Changes
 
-Final focused run:
+- `packages/opencode/src/design/agent/graph.ts` — inspected only; `execute` already calls `design.applyRawDelta(proposal.delta)` then `design.bumpVersion("chat-agent")` with no direct `GraphEngine` usage.
+- `packages/opencode/test/design/agent/graph-execute.test.ts`:
+  - Added `applies a minimal delta with only user fields` which submits an `addNodes` entry containing only `id`, `name`, and `contextId`, then verifies the node lands in the DB with defaulted `kind`, `aliases`, `defaultSemantics`, and `retired` values.
+  - Fixed `applies mixed delta operations` to use `crypto.randomUUID()` for the newly created node that is also referenced by a newly created edge, matching `applyRawDelta`'s placeholder-ID resolution semantics.
+- `.superpowers/sdd/task-4-report.md` — this report.
+
+## Test results
 
 ```
-bun test test/design/agent/graph-execute.test.ts
- 4 pass
+bun test test/design/agent/graph.test.ts test/design/agent/graph-execute.test.ts
+ 8 pass
  0 fail
- 12 expect() calls
-Ran 4 tests across 1 file.
+ 27 expect() calls
+Ran 8 tests across 2 files.
 ```
 
-Full design suite run before commit:
-
-```
-bun test test/design
- 32 pass
- 0 fail
- 79 expect() calls
-Ran 32 tests across 8 files.
-```
-
-Typecheck:
+## Typecheck results
 
 ```
 bun run typecheck
 $ tsgo --noEmit
 ```
 
-## TDD Evidence
+## Commit hash
 
-### RED
-
-Command: `bun test test/design/agent/graph-execute.test.ts`
-
-```
-error: expect(received).toBe(expected)
-Expected: "UserServiceV2"
-Received: "UserService"
-(fail) GraphAgent execute > applies a node update via Design.Service
- 0 pass
- 1 fail
-```
-
-### GREEN
-
-Command: `bun test test/design/agent/graph-execute.test.ts`
-
-```
-(pass) GraphAgent execute > applies a node update via Design.Service
- 1 pass
- 0 fail
- 2 expect() calls
-Ran 1 test across 1 file.
-```
-
-## Files changed
-
-- `packages/opencode/src/design/agent/graph.ts`
-- `packages/opencode/src/design/design.ts`
-- `packages/opencode/test/design/agent/graph-execute.test.ts`
-- `.superpowers/sdd/task-4-report.md`
-
-## Self-review findings
-
-- The order of operations inside `execute` matches the task brief.
-- `Design.Service.transaction` runs the supplied effect inside `state.store.transaction`; each internal CRUD call then creates a nested savepoint, which is safe because the Effect SQL client supports nested transactions.
-- Edge key parsing assumes the `::` separator used by `DesignTypes.edgeKey` and that node IDs do not contain `::`.
-- `addNodes` delta entries are typed as full `DesignTypes.Node` objects; `execute` builds a minimal `createNode` input so the readonly/mutable array mismatch is avoided.
-- No `try`/`catch` is used; failures flow through Effect error channels.
-
-## Issues or concerns
-
-None blocking. The main assumption is that `deleteEdgeKeys` uses the same canonical key format produced by `DesignTypes.edgeKey`. If that format ever changes, parsing must stay in sync.
-
-## Reviewer Findings
-
-- Important: GraphAgent.defaultLayer should also provide Design.defaultLayer because execute now depends on Design.Service.
-- Important: Design.Service.transaction ignores transactional store argument; works but is fragile.
-- Minor: transaction generic drops R; parseEdgeKey could fail typed error; transaction lacks Effect.fn trace.
-
-## Review Finding Fix
-
-### What changed
-
-Updated `GraphAgent.defaultLayer` in `packages/opencode/src/design/agent/graph.ts` to also provide `Design.defaultLayer`. The layer now composes both dependencies required by `GraphAgent.layer`:
-
-```ts
-export const defaultLayer = layer.pipe(
-  Layer.provide(DesignAgentLlm.defaultLayer),
-  Layer.provide(Design.defaultLayer),
-)
-```
-
-This ensures consumers using `GraphAgent.defaultLayer` directly have `Design.Service` available for `GraphAgent.execute()`.
-
-### Test commands and results
-
-Focused test:
-
-```
-bun test test/design/agent/graph-execute.test.ts
- 4 pass
- 0 fail
- 12 expect() calls
-Ran 4 tests across 1 file.
-```
-
-Typecheck:
-
-```
-bun run typecheck
-$ tsgo --noEmit
-```
-
-Design-related tests:
-
-```
-bun test test/design
- 32 pass
- 0 fail
- 79 expect() calls
-Ran 32 tests across 8 files.
-```
-
+`422cdf419`
