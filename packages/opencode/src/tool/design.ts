@@ -731,6 +731,48 @@ export const DesignActivateNodeTool = Tool.define<
   }),
 )
 
+const ProposeChangeParameters = Schema.Struct({
+  delta: Schema.Unknown.annotate({ description: "Batch of graph changes to propose" }),
+})
+
+export const DesignProposeChangeTool = Tool.define<
+  typeof ProposeChangeParameters,
+  Record<string, unknown>,
+  Design.Service
+>(
+  "design_propose_change",
+  Effect.gen(function* () {
+    const design = yield* Design.Service
+    return {
+      description:
+        "Propose a complete batch of graph changes (nodes and edges) to be analyzed and applied. Prefer this over individual mutations.",
+      parameters: ProposeChangeParameters,
+      execute: (args, ctx) =>
+        Effect.gen(function* () {
+          const result = yield* design.proposeChanges(args.delta as GraphAgentTypes.GraphDelta)
+          return {
+            title: "Change proposal",
+            output: result.summary,
+            metadata: { result },
+          }
+        }).pipe(Effect.orDie),
+    }
+  }),
+)
+
+export const GraphAgentDesignTools = {
+  DesignCreateContextTool,
+  DesignUpdateContextTool,
+  DesignCreateNodeTool,
+  DesignUpdateNodeTool,
+  DesignRetireNodeTool,
+  DesignDeleteNodeTool,
+  DesignCreateEdgeTool,
+  DesignUpdateEdgeTool,
+  DesignDeleteEdgeTool,
+  DesignCreatePrototypeTool,
+} as const
+
 const GetStateParameters = Schema.Struct({})
 
 export const DesignGetStateTool = Tool.define<

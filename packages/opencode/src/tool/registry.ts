@@ -5,12 +5,6 @@ import { PlanExitTool } from "./plan"
 import {
   DesignActivateContextTool,
   DesignActivateNodeTool,
-  DesignCreateContextTool,
-  DesignCreateEdgeTool,
-  DesignCreateNodeTool,
-  DesignCreatePrototypeTool,
-  DesignDeleteEdgeTool,
-  DesignDeleteNodeTool,
   DesignFindNodesByNameTool,
   DesignGetContextTool,
   DesignGetNodeTool,
@@ -20,12 +14,9 @@ import {
   DesignListEdgesTool,
   DesignListNodesTool,
   DesignListPrototypesTool,
+  DesignProposeChangeTool,
   DesignResolveReferenceTool,
-  DesignRetireNodeTool,
   DesignShowWorkingSetTool,
-  DesignUpdateContextTool,
-  DesignUpdateEdgeTool,
-  DesignUpdateNodeTool,
 } from "./design"
 import { Design } from "@/design/design"
 import { Session } from "@/session/session"
@@ -133,24 +124,15 @@ export const layer = Layer.effect(
     const skilltool = yield* SkillTool
     const agent = yield* Agent.Service
     const designResolveReference = yield* DesignResolveReferenceTool
-    const designCreateContext = yield* DesignCreateContextTool
+    const designProposeChange = yield* DesignProposeChangeTool
     const designListContexts = yield* DesignListContextsTool
     const designGetContext = yield* DesignGetContextTool
-    const designUpdateContext = yield* DesignUpdateContextTool
-    const designCreateNode = yield* DesignCreateNodeTool
+    const designListNodes = yield* DesignListNodesTool
     const designGetNode = yield* DesignGetNodeTool
-    const designUpdateNode = yield* DesignUpdateNodeTool
-    const designRetireNode = yield* DesignRetireNodeTool
-    const designDeleteNode = yield* DesignDeleteNodeTool
     const designFindNodesByName = yield* DesignFindNodesByNameTool
-    const designCreateEdge = yield* DesignCreateEdgeTool
-    const designUpdateEdge = yield* DesignUpdateEdgeTool
-    const designDeleteEdge = yield* DesignDeleteEdgeTool
-    const designCreatePrototype = yield* DesignCreatePrototypeTool
+    const designListEdges = yield* DesignListEdgesTool
     const designListPrototypes = yield* DesignListPrototypesTool
     const designGetPrototype = yield* DesignGetPrototypeTool
-    const designListNodes = yield* DesignListNodesTool
-    const designListEdges = yield* DesignListEdgesTool
     const designShowWorkingSet = yield* DesignShowWorkingSetTool
     const designActivateContext = yield* DesignActivateContextTool
     const designActivateNode = yield* DesignActivateNodeTool
@@ -262,24 +244,15 @@ export const layer = Layer.effect(
           lsp: Tool.init(lsptool),
           plan: Tool.init(plan),
           design_resolve_reference: Tool.init(designResolveReference),
-          design_create_context: Tool.init(designCreateContext),
+          design_propose_change: Tool.init(designProposeChange),
           design_list_contexts: Tool.init(designListContexts),
           design_get_context: Tool.init(designGetContext),
-          design_update_context: Tool.init(designUpdateContext),
-          design_create_node: Tool.init(designCreateNode),
+          design_list_nodes: Tool.init(designListNodes),
           design_get_node: Tool.init(designGetNode),
-          design_update_node: Tool.init(designUpdateNode),
-          design_retire_node: Tool.init(designRetireNode),
-          design_delete_node: Tool.init(designDeleteNode),
           design_find_nodes_by_name: Tool.init(designFindNodesByName),
-          design_create_edge: Tool.init(designCreateEdge),
-          design_update_edge: Tool.init(designUpdateEdge),
-          design_delete_edge: Tool.init(designDeleteEdge),
-          design_create_prototype: Tool.init(designCreatePrototype),
+          design_list_edges: Tool.init(designListEdges),
           design_list_prototypes: Tool.init(designListPrototypes),
           design_get_prototype: Tool.init(designGetPrototype),
-          design_list_nodes: Tool.init(designListNodes),
-          design_list_edges: Tool.init(designListEdges),
           design_show_working_set: Tool.init(designShowWorkingSet),
           design_activate_context: Tool.init(designActivateContext),
           design_activate_node: Tool.init(designActivateNode),
@@ -306,24 +279,15 @@ export const layer = Layer.effect(
             ...(flags.experimentalLspTool ? [tool.lsp] : []),
             ...(flags.experimentalPlanMode && flags.client === "cli" ? [tool.plan] : []),
             tool.design_resolve_reference,
-            tool.design_create_context,
+            tool.design_propose_change,
             tool.design_list_contexts,
             tool.design_get_context,
-            tool.design_update_context,
-            tool.design_create_node,
+            tool.design_list_nodes,
             tool.design_get_node,
-            tool.design_update_node,
-            tool.design_retire_node,
-            tool.design_delete_node,
             tool.design_find_nodes_by_name,
-            tool.design_create_edge,
-            tool.design_update_edge,
-            tool.design_delete_edge,
-            tool.design_create_prototype,
+            tool.design_list_edges,
             tool.design_list_prototypes,
             tool.design_get_prototype,
-            tool.design_list_nodes,
-            tool.design_list_edges,
             tool.design_show_working_set,
             tool.design_activate_context,
             tool.design_activate_node,

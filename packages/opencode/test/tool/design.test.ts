@@ -10,12 +10,6 @@ import { ApprovalPanel } from "../../src/design/approval-panel"
 import {
   DesignActivateContextTool,
   DesignActivateNodeTool,
-  DesignCreateContextTool,
-  DesignCreateEdgeTool,
-  DesignCreateNodeTool,
-  DesignCreatePrototypeTool,
-  DesignDeleteEdgeTool,
-  DesignDeleteNodeTool,
   DesignFindNodesByNameTool,
   DesignGetContextTool,
   DesignGetNodeTool,
@@ -25,12 +19,9 @@ import {
   DesignListEdgesTool,
   DesignListNodesTool,
   DesignListPrototypesTool,
+  DesignProposeChangeTool,
   DesignResolveReferenceTool,
-  DesignRetireNodeTool,
   DesignShowWorkingSetTool,
-  DesignUpdateContextTool,
-  DesignUpdateEdgeTool,
-  DesignUpdateNodeTool,
 } from "../../src/tool/design"
 import { Tool } from "@/tool/tool"
 import { Agent } from "../../src/agent/agent"
@@ -93,18 +84,125 @@ const makeCtx = () => ({
 
 const it = testEffect(Layer.mergeAll(Truncate.defaultLayer, Agent.defaultLayer, testDesignLayer))
 
+const makeNodeDelta = (contextId: string, name: string, id: string): GraphAgentTypes.GraphDelta => ({
+  addNodes: [{
+    id,
+    name,
+    contextId,
+    kind: "node",
+    aliases: [],
+    defaultSemantics: "",
+    connectedEdges: [],
+    createdAt: 0,
+    updatedAt: 0,
+    retired: false,
+  }],
+})
+
 describe("Design tools", () => {
-  it.instance("create_context and create_node", () =>
+  it.instance("propose_change creates nodes", () =>
     Effect.gen(function* () {
-      const ctxTool = yield* DesignCreateContextTool
-      const nodeTool = yield* DesignCreateNodeTool
+      const design = yield* Design.Service
+      const tool = yield* DesignProposeChangeTool
+      const listTool = yield* DesignListNodesTool
       const ctx = makeCtx()
 
-      const ctxResult = yield* (yield* Tool.init(ctxTool)).execute({ name: "战斗系统" }, ctx)
-      const contextId = ctxResult.metadata.contextId as string
+      const context = yield* design.createContext({ id: "ctx-core", name: "Core" })
 
-      const nodeResult = yield* (yield* Tool.init(nodeTool)).execute({ name: "船", contextId }, ctx)
-      expect(nodeResult.output).toContain("船")
+      yield* (yield* Tool.init(tool)).execute(
+        { delta: makeNodeDelta(context.id, "船", "node-ship") },
+        ctx,
+      )
+
+      const result = yield* (yield* Tool.init(listTool)).execute({}, ctx)
+      expect(result.output).toContain("船")
+      expect(result.metadata.count).toBe(1)
+    }),
+  )
+
+  it.instance("propose_change updates and deletes nodes", () =>
+    Effect.gen(function* () {
+      const design = yield* Design.Service
+      const tool = yield* DesignProposeChangeTool
+      const getTool = yield* DesignGetNodeTool
+      const ctx = makeCtx()
+
+      yield* design.createContext({ id: "ctx-core", name: "Core" })
+      yield* (yield* Tool.init(tool)).execute(
+        { delta: makeNodeDelta("ctx-core", "船", "node-ship") },
+        ctx,
+      )
+
+      yield* (yield* Tool.init(tool)).execute(
+        { delta: { updateNodes: [{ id: "node-ship", patch: { name: "飞船" } }] } },
+        ctx,
+      )
+      const updated = yield* (yield* Tool.init(getTool)).execute({ id: "node-ship" }, ctx)
+      expect(updated.output).toContain("飞船")
+
+      yield* (yield* Tool.init(tool)).execute(
+        { delta: { deleteNodeIds: ["node-ship"] } },
+        ctx,
+      )
+      const deleted = yield* (yield* Tool.init(getTool)).execute({ id: "node-ship" }, ctx)
+      expect(deleted.output).toContain("No node")
+    }),
+  )
+
+  it.instance("propose_change creates, updates and deletes edges", () =>
+    Effect.gen(function* () {
+      const design = yield* Design.Service
+      const tool = yield* DesignProposeChangeTool
+      const listTool = yield* DesignListEdgesTool
+      const ctx = makeCtx()
+
+      yield* design.createContext({ id: "ctx-core", name: "Core" })
+      yield* (yield* Tool.init(tool)).execute(
+        { delta: makeNodeDelta("ctx-core", "船", "node-ship") },
+        ctx,
+      )
+      yield* (yield* Tool.init(tool)).execute(
+        { delta: makeNodeDelta("ctx-core", "生命值", "node-hp") },
+        ctx,
+      )
+      yield* (yield* Tool.init(tool)).execute(
+        {
+          delta: {
+            addEdges: [{
+              leftNodeId: "node-ship",
+              rightNodeId: "node-hp",
+              prototypeId: "aggregate",
+              parameters: { max: 1000 },
+              createdAt: 0,
+              updatedAt: 0,
+            }],
+          },
+        },
+        ctx,
+      )
+
+      const before = yield* (yield* Tool.init(listTool)).execute({}, ctx)
+      expect(before.metadata.count).toBe(1)
+
+      yield* (yield* Tool.init(tool)).execute(
+        {
+          delta: {
+            updateEdges: [{
+              leftNodeId: "node-ship",
+              rightNodeId: "node-hp",
+              patch: { parameters: { max: 2000 } },
+            }],
+          },
+        },
+        ctx,
+      )
+
+      yield* (yield* Tool.init(tool)).execute(
+        { delta: { deleteEdgeKeys: ["node-ship::node-hp"] } },
+        ctx,
+      )
+      const after = yield* (yield* Tool.init(listTool)).execute({}, ctx)
+      expect(after.metadata.count).toBe(0)
     }),
   )
 
@@ -114,28 +212,6 @@ describe("Design tools", () => {
       const ctx = makeCtx()
       const result = yield* (yield* Tool.init(tool)).execute({ reference: "生命值" }, ctx)
       expect(result.metadata.action).toBe("created")
-    }),
-  )
-
-  it.instance("create_edge links two nodes", () =>
-    Effect.gen(function* () {
-      const resolveTool = yield* DesignResolveReferenceTool
-      const edgeTool = yield* DesignCreateEdgeTool
-      const ctx = makeCtx()
-
-      const ship = yield* (yield* Tool.init(resolveTool)).execute({ reference: "船" }, ctx)
-      const hp = yield* (yield* Tool.init(resolveTool)).execute({ reference: "生命值" }, ctx)
-
-      const edgeResult = yield* (yield* Tool.init(edgeTool)).execute(
-        {
-          leftNodeId: ship.metadata.nodeId as string,
-          rightNodeId: hp.metadata.nodeId as string,
-          prototypeId: "aggregate",
-          parameters: { 上限: 1000 },
-        },
-        ctx,
-      )
-      expect(edgeResult.output).toContain("aggregate")
     }),
   )
 
@@ -152,143 +228,83 @@ describe("Design tools", () => {
     }),
   )
 
-  it.instance("context CRUD", () =>
+  it.instance("context get and list", () =>
     Effect.gen(function* () {
-      const createTool = yield* DesignCreateContextTool
+      const design = yield* Design.Service
       const listTool = yield* DesignListContextsTool
       const getTool = yield* DesignGetContextTool
-      const updateTool = yield* DesignUpdateContextTool
       const ctx = makeCtx()
 
-      const created = yield* (yield* Tool.init(createTool)).execute({ name: "战斗系统" }, ctx)
-      const contextId = created.metadata.contextId as string
+      const created = yield* design.createContext({ id: "ctx-battle", name: "战斗系统" })
 
       const listResult = yield* (yield* Tool.init(listTool)).execute({}, ctx)
       expect(listResult.output).toContain("战斗系统")
 
-      const getResult = yield* (yield* Tool.init(getTool)).execute({ id: contextId }, ctx)
-      expect(getResult.output).toContain(contextId)
-
-      const updateResult = yield* (yield* Tool.init(updateTool)).execute({ id: contextId, name: "战斗核心" }, ctx)
-      expect(updateResult.output).toContain("战斗核心")
+      const getResult = yield* (yield* Tool.init(getTool)).execute({ id: created.id }, ctx)
+      expect(getResult.output).toContain(created.id)
     }),
   )
 
-  it.instance("node CRUD including retire and delete", () =>
+  it.instance("node get and find", () =>
     Effect.gen(function* () {
-      const ctxTool = yield* DesignCreateContextTool
-      const nodeTool = yield* DesignCreateNodeTool
+      const design = yield* Design.Service
+      const tool = yield* DesignProposeChangeTool
       const getTool = yield* DesignGetNodeTool
-      const updateTool = yield* DesignUpdateNodeTool
-      const retireTool = yield* DesignRetireNodeTool
-      const deleteTool = yield* DesignDeleteNodeTool
       const findTool = yield* DesignFindNodesByNameTool
       const ctx = makeCtx()
 
-      const c = yield* (yield* Tool.init(ctxTool)).execute({ name: "系统" }, ctx)
-      const contextId = c.metadata.contextId as string
-
-      const node = yield* (yield* Tool.init(nodeTool)).execute(
-        { name: "船", contextId, aliases: ["飞船"] },
+      yield* design.createContext({ id: "ctx-core", name: "Core" })
+      yield* (yield* Tool.init(tool)).execute(
+        { delta: makeNodeDelta("ctx-core", "船", "node-ship") },
         ctx,
       )
-      const nodeId = node.metadata.nodeId as string
 
-      const getResult = yield* (yield* Tool.init(getTool)).execute({ id: nodeId }, ctx)
-      expect(getResult.output).toContain("飞船")
+      const getResult = yield* (yield* Tool.init(getTool)).execute({ id: "node-ship" }, ctx)
+      expect(getResult.output).toContain("船")
 
-      const updateResult = yield* (yield* Tool.init(updateTool)).execute(
-        { id: nodeId, defaultSemantics: "玩家载具" },
-        ctx,
-      )
-      expect(updateResult.output).toContain("玩家载具")
-
-      const findResult = yield* (yield* Tool.init(findTool)).execute({ name: "飞船" }, ctx)
+      const findResult = yield* (yield* Tool.init(findTool)).execute({ name: "船" }, ctx)
       expect(findResult.metadata.count).toBe(1)
-
-      yield* (yield* Tool.init(retireTool)).execute({ id: nodeId, retired: true }, ctx)
-      const getAfterRetire = yield* (yield* Tool.init(getTool)).execute({ id: nodeId }, ctx)
-      expect((getAfterRetire.metadata.node as { retired: boolean }).retired).toBe(true)
-
-      yield* (yield* Tool.init(deleteTool)).execute({ id: nodeId }, ctx)
-      const getAfterDelete = yield* (yield* Tool.init(getTool)).execute({ id: nodeId }, ctx)
-      expect(getAfterDelete.output).toContain("No node")
     }),
   )
 
-  it.instance("edge update and delete", () =>
+  it.instance("prototype get and list", () =>
     Effect.gen(function* () {
-      const resolveTool = yield* DesignResolveReferenceTool
-      const edgeTool = yield* DesignCreateEdgeTool
-      const updateTool = yield* DesignUpdateEdgeTool
-      const deleteTool = yield* DesignDeleteEdgeTool
-      const listTool = yield* DesignListEdgesTool
-      const ctx = makeCtx()
-
-      const ship = yield* (yield* Tool.init(resolveTool)).execute({ reference: "船" }, ctx)
-      const hp = yield* (yield* Tool.init(resolveTool)).execute({ reference: "生命值" }, ctx)
-      const leftNodeId = ship.metadata.nodeId as string
-      const rightNodeId = hp.metadata.nodeId as string
-
-      yield* (yield* Tool.init(edgeTool)).execute(
-        { leftNodeId, rightNodeId, prototypeId: "aggregate" },
-        ctx,
-      )
-
-      const updateResult = yield* (yield* Tool.init(updateTool)).execute(
-        { leftNodeId, rightNodeId, parameters: { max: 100 } },
-        ctx,
-      )
-      expect(updateResult.output).toContain("aggregate")
-
-      yield* (yield* Tool.init(deleteTool)).execute({ leftNodeId, rightNodeId }, ctx)
-      const listResult = yield* (yield* Tool.init(listTool)).execute({}, ctx)
-      expect(listResult.metadata.count).toBe(0)
-    }),
-  )
-
-  it.instance("prototype CRUD", () =>
-    Effect.gen(function* () {
-      const createTool = yield* DesignCreatePrototypeTool
+      const design = yield* Design.Service
       const listTool = yield* DesignListPrototypesTool
       const getTool = yield* DesignGetPrototypeTool
       const ctx = makeCtx()
 
-      const created = yield* (yield* Tool.init(createTool)).execute(
-        { id: "compose", name: "组合" },
-        ctx,
-      )
-      const prototypeId = created.metadata.prototypeId as string
+      const created = yield* design.createPrototype({ id: "compose", name: "组合" })
 
       const listResult = yield* (yield* Tool.init(listTool)).execute({}, ctx)
       expect(listResult.output).toContain("组合")
 
-      const getResult = yield* (yield* Tool.init(getTool)).execute({ id: prototypeId }, ctx)
-      expect(getResult.output).toContain(prototypeId)
+      const getResult = yield* (yield* Tool.init(getTool)).execute({ id: created.id }, ctx)
+      expect(getResult.output).toContain(created.id)
     }),
   )
 
   it.instance("working set activation", () =>
     Effect.gen(function* () {
-      const ctxTool = yield* DesignCreateContextTool
-      const nodeTool = yield* DesignCreateNodeTool
+      const design = yield* Design.Service
+      const tool = yield* DesignProposeChangeTool
       const activateCtxTool = yield* DesignActivateContextTool
       const activateNodeTool = yield* DesignActivateNodeTool
       const showTool = yield* DesignShowWorkingSetTool
       const ctx = makeCtx()
 
-      const c = yield* (yield* Tool.init(ctxTool)).execute({ name: "系统" }, ctx)
-      const contextId = c.metadata.contextId as string
+      yield* design.createContext({ id: "ctx-core", name: "Core" })
+      yield* (yield* Tool.init(tool)).execute(
+        { delta: makeNodeDelta("ctx-core", "船", "node-ship") },
+        ctx,
+      )
 
-      const node = yield* (yield* Tool.init(nodeTool)).execute({ name: "船", contextId }, ctx)
-      const nodeId = node.metadata.nodeId as string
-
-      yield* (yield* Tool.init(activateCtxTool)).execute({ contextId }, ctx)
-      yield* (yield* Tool.init(activateNodeTool)).execute({ nodeId }, ctx)
+      yield* (yield* Tool.init(activateCtxTool)).execute({ contextId: "ctx-core" }, ctx)
+      yield* (yield* Tool.init(activateNodeTool)).execute({ nodeId: "node-ship" }, ctx)
 
       const showResult = yield* (yield* Tool.init(showTool)).execute({}, ctx)
-      expect(showResult.output).toContain(contextId)
-      expect(showResult.output).toContain(nodeId)
+      expect(showResult.output).toContain("ctx-core")
+      expect(showResult.output).toContain("node-ship")
     }),
   )
 
@@ -377,19 +393,20 @@ describe("Design tools", () => {
     }),
   )
 
-  it.instance("create_node tool bumps graph version via proposeChanges", () =>
+  it.instance("propose_change tool bumps graph version", () =>
     Effect.gen(function* () {
       const design = yield* Design.Service
-      const ctxTool = yield* DesignCreateContextTool
-      const nodeTool = yield* DesignCreateNodeTool
+      const tool = yield* DesignProposeChangeTool
       const ctx = makeCtx()
 
-      const ctxResult = yield* (yield* Tool.init(ctxTool)).execute({ name: "VersionCtx" }, ctx)
-      const contextId = ctxResult.metadata.contextId as string
+      yield* design.createContext({ id: "ctx-version", name: "VersionCtx" })
 
       const before = yield* design.getCurrentVersion()
 
-      yield* (yield* Tool.init(nodeTool)).execute({ name: "VersionNode", contextId }, ctx)
+      yield* (yield* Tool.init(tool)).execute(
+        { delta: makeNodeDelta("ctx-version", "VersionNode", "node-version") },
+        ctx,
+      )
 
       const after = yield* design.getCurrentVersion()
       expect(after.sequence).toBe(before.sequence + 1)

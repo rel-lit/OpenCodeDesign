@@ -151,6 +151,7 @@ export const layer = Layer.effect(
           apply_patch: "deny",
           task: "deny",
           design_resolve_reference: "allow",
+          design_propose_change: "allow",
           design_create_context: "allow",
           design_list_contexts: "allow",
           design_get_context: "allow",
