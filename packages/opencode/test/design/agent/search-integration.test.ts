@@ -3,8 +3,9 @@ import { NodeFileSystem, NodePath } from "@effect/platform-node"
 import { DesignAgentLlm } from "@/design/agent/llm"
 import { SearchAgent } from "@/design/agent/search"
 import { InstanceRef } from "@/effect/instance-ref"
-import { Effect, FileSystem, Layer, Path } from "effect"
-import { provideTestInstance, tmpdir } from "../../fixture/fixture"
+import type { InstanceContext } from "@/project/instance-context"
+import { Effect, Layer } from "effect"
+import { tmpdir } from "../../fixture/fixture"
 
 const mockLlmLayer = Layer.succeed(
   DesignAgentLlm.Service,
@@ -40,16 +41,18 @@ test("readProject finds missing PaymentGateway", async () => {
     "export class OrderService {\n  place() {}\n}\n",
   )
 
-  await provideTestInstance({
+  const ctx: InstanceContext = {
     directory: tmp.path,
-    fn: (ctx) =>
-      Effect.runPromise(
-        Effect.gen(function* () {
-          const sa = yield* SearchAgent.Service
-          const result = yield* sa.readProject("设计包含 OrderService 和 PaymentGateway")
-          expect(result.summaryReport).toBe("Project analysis complete")
-          expect(result.diffAnalysis?.missingInCode.some((m) => m.name === "PaymentGateway")).toBe(true)
-        }).pipe(Effect.provideService(InstanceRef, ctx), Effect.provide(testLayer)),
-      ),
-  })
+    worktree: tmp.path,
+    project: {} as InstanceContext["project"],
+  }
+
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const sa = yield* SearchAgent.Service
+      const result = yield* sa.readProject("设计包含 OrderService 和 PaymentGateway")
+      expect(result.summaryReport).toBe("Project analysis complete")
+      expect(result.diffAnalysis?.missingInCode.some((m) => m.name === "PaymentGateway")).toBe(true)
+    }).pipe(Effect.provideService(InstanceRef, ctx), Effect.provide(testLayer)),
+  )
 })

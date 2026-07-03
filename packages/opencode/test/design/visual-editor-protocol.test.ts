@@ -108,10 +108,11 @@ describe("VisualEditorProtocol", () => {
       yield* protocol.save(delta)
 
       const state = yield* design.getState()
-      const eventTypes = state.eventLog.events.map((event) => event.eventType)
+      const events = state.eventLog?.events ?? []
+      const eventTypes = events.map((event) => event.eventType)
       expect(eventTypes).toContain("node_created")
       expect(eventTypes).toContain("graph_version_bumped")
-      const versionEvent = state.eventLog.events.find((event) => event.eventType === "graph_version_bumped")
+      const versionEvent = events.find((event) => event.eventType === "graph_version_bumped")
       expect(versionEvent?.source).toBe("visual-editor")
     }),
   )
