@@ -29,13 +29,29 @@ export interface ActiveWorkingSet {
 }
 
 export interface GraphDelta {
-  addNodes?: DesignTypes.Node[]
-  updateNodes?: Array<{ id: string; patch: Partial<DesignTypes.Node> }>
+  addNodes?: NodeInput[]
+  updateNodes?: Array<{ id: string; patch: Partial<NodeInput> }>
   deleteNodeIds?: string[]
-  addEdges?: DesignTypes.Edge[]
-  updateEdges?: Array<{ leftNodeId: string; rightNodeId: string; patch: Partial<DesignTypes.Edge> }>
+  addEdges?: EdgeInput[]
+  updateEdges?: Array<{ leftNodeId: string; rightNodeId: string; patch: Partial<EdgeInput> }>
   deleteEdgeKeys?: string[]
 }
+
+export interface NodeInput
+  extends Omit<
+      DesignTypes.Node,
+      "id" | "kind" | "aliases" | "connectedEdges" | "createdAt" | "updatedAt" | "retired"
+    >,
+    Partial<
+      Pick<
+        DesignTypes.Node,
+        "id" | "kind" | "aliases" | "connectedEdges" | "createdAt" | "updatedAt" | "retired"
+      >
+    > {}
+
+export interface EdgeInput
+  extends Omit<DesignTypes.Edge, "createdAt" | "updatedAt">,
+    Partial<Pick<DesignTypes.Edge, "createdAt" | "updatedAt">> {}
 
 export interface Input {
   source: "chat" | "visual-editor"

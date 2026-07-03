@@ -32,4 +32,13 @@ describe("GraphAgent types", () => {
     }
     expect(input.source).toBe("chat")
   })
+
+  test("minimal GraphDelta omits system node and edge fields", () => {
+    const delta: GraphAgent.GraphDelta = {
+      addNodes: [{ name: "NewNode", contextId: "ctx", defaultSemantics: "" }],
+      addEdges: [{ leftNodeId: "a", rightNodeId: "b", prototypeId: "p", parameters: {} }],
+    }
+    expect(delta.addNodes).toHaveLength(1)
+    expect(delta.addEdges).toHaveLength(1)
+  })
 })

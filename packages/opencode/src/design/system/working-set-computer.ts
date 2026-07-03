@@ -59,7 +59,7 @@ export const fromDelta = (
   const involvedNodeIds = new Set<string>(active.nodeIds)
 
   for (const node of delta.addNodes ?? []) {
-    involvedNodeIds.add(node.id)
+    if (node.id) involvedNodeIds.add(node.id)
   }
   for (const update of delta.updateNodes ?? []) {
     involvedNodeIds.add(update.id)

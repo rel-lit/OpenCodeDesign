@@ -430,16 +430,16 @@ export const layer = (options?: LayerOptions) =>
           Effect.gen(function* () {
             const events: DesignTypes.EventNode[] = []
             for (const node of delta.addNodes ?? []) {
-              yield* state.graph.createNode({
+              const created = yield* state.graph.createNode({
                 id: node.id,
                 name: node.name,
                 contextId: node.contextId,
                 kind: node.kind,
                 defaultSemantics: node.defaultSemantics,
-                aliases: [...node.aliases],
+                aliases: node.aliases ? [...node.aliases] : [],
               })
               events.push(
-                yield* state.eventLog.append({ eventType: "node_created", affectedNodeIds: [node.id] }),
+                yield* state.eventLog.append({ eventType: "node_created", affectedNodeIds: [created.id] }),
               )
             }
             for (const update of delta.updateNodes ?? []) {
