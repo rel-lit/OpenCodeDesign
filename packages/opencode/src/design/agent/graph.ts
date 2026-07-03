@@ -45,8 +45,8 @@ const OutputSchema = Schema.Struct({
       reason: Schema.String,
     }))),
   })),
-  affectedNodes: Schema.Array(Schema.String),
-  affectedEdges: Schema.Array(Schema.String),
+  affectedNodes: Schema.optional(Schema.Array(Schema.String)),
+  affectedEdges: Schema.optional(Schema.Array(Schema.String)),
   questions: Schema.optional(Schema.Array(Schema.String)),
   delta: Schema.optional(GraphDeltaSchema),
 })

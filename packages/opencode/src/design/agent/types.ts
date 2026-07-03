@@ -54,8 +54,8 @@ export interface Output {
     warnings?: Array<{ code: string; message: string; nodeId?: string; edgeKey?: string }>
     suggestions?: Array<{ action: string; reason: string }>
   }
-  affectedNodes: string[]
-  affectedEdges: string[]
+  affectedNodes?: string[]
+  affectedEdges?: string[]
   questions?: string[]
   delta?: GraphDelta
 }
