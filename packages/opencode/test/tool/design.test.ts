@@ -377,7 +377,7 @@ describe("Design tools", () => {
     }),
   )
 
-  it.instance("create_node tool bumps graph version", () =>
+  it.instance("create_node tool bumps graph version via proposeChanges", () =>
     Effect.gen(function* () {
       const design = yield* Design.Service
       const ctxTool = yield* DesignCreateContextTool

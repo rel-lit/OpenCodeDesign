@@ -1,14 +1,8 @@
 import { Effect, Schema } from "effect"
 import * as Tool from "./tool"
 import { Design } from "@/design/design"
+import * as GraphAgentTypes from "@/design/agent/types"
 import { DesignTypes } from "@/design/core/types"
-
-const withVersionBump = <A, E>(design: Design.Interface, effect: Effect.Effect<A, E>) =>
-  Effect.gen(function* () {
-    const result = yield* effect
-    yield* design.bumpVersion("chat-agent")
-    return result
-  })
 
 const ResolveReferenceParameters = Schema.Struct({
   reference: Schema.String.annotate({ description: "The concept name or alias to resolve" }),
@@ -32,9 +26,6 @@ export const DesignResolveReferenceTool = Tool.define<
       execute: (args, ctx) =>
         Effect.gen(function* () {
           const result = yield* design.resolveReference(args)
-          if (result.action === "created") {
-            yield* design.bumpVersion("chat-agent")
-          }
           return {
             title: `Resolved ${args.reference}`,
             output: `${result.action === "created" ? "Created" : "Matched"} node ${result.fullName} (${result.nodeId})`,
@@ -63,20 +54,17 @@ export const DesignCreateContextTool = Tool.define<
         "Create a new bounded context for grouping semantically related nodes. Every node must belong to exactly one context.",
       parameters: CreateContextParameters,
       execute: (args, ctx) =>
-        withVersionBump(
-          design,
-          Effect.gen(function* () {
-            const context = yield* design.createContext({
-              name: args.name,
-              semantics: args.semantics,
-            })
-            return {
-              title: `Created context ${context.name}`,
-              output: `Context ${context.name} (${context.id})`,
-              metadata: { contextId: context.id },
-            }
-          }),
-        ).pipe(Effect.orDie),
+        Effect.gen(function* () {
+          const context = yield* design.createContext({
+            name: args.name,
+            semantics: args.semantics,
+          })
+          return {
+            title: `Created context ${context.name}`,
+            output: `Context ${context.name} (${context.id})`,
+            metadata: { contextId: context.id },
+          }
+        }).pipe(Effect.orDie),
     }
   }),
 )
@@ -153,20 +141,17 @@ export const DesignUpdateContextTool = Tool.define<
       description: "Update the name or semantics of a bounded context.",
       parameters: UpdateContextParameters,
       execute: (args, ctx) =>
-        withVersionBump(
-          design,
-          Effect.gen(function* () {
-            const context = yield* design.updateContext(args.id, {
-              name: args.name,
-              semantics: args.semantics,
-            })
-            return {
-              title: `Updated context ${context.name}`,
-              output: `Context ${context.name} (${context.id})`,
-              metadata: { contextId: context.id },
-            }
-          }),
-        ).pipe(Effect.orDie),
+        Effect.gen(function* () {
+          const context = yield* design.updateContext(args.id, {
+            name: args.name,
+            semantics: args.semantics,
+          })
+          return {
+            title: `Updated context ${context.name}`,
+            output: `Context ${context.name} (${context.id})`,
+            metadata: { contextId: context.id },
+          }
+        }).pipe(Effect.orDie),
     }
   }),
 )
@@ -191,25 +176,30 @@ export const DesignCreateNodeTool = Tool.define<
         "Create a new node explicitly in a specific context. Prefer design_resolve_reference unless you need exact control over context or aliases.",
       parameters: CreateNodeParameters,
       execute: (args, ctx) =>
-        withVersionBump(
-          design,
-          Effect.gen(function* () {
-            const nodeId = crypto.randomUUID()
-            const node = yield* design.createNode({
+        Effect.gen(function* () {
+          const nodeId = crypto.randomUUID()
+          const delta: GraphAgentTypes.GraphDelta = {
+            addNodes: [{
               id: nodeId,
               name: args.name,
               contextId: args.contextId,
               kind: "node",
               aliases: args.aliases ? [...args.aliases] : [],
               defaultSemantics: args.defaultSemantics ?? "",
-            })
-            return {
-              title: `Created node ${node.name}`,
-              output: `Node ${node.name} (${node.id}) in context ${node.contextId}`,
-              metadata: { nodeId: node.id },
-            }
-          }),
-        ).pipe(Effect.orDie),
+              connectedEdges: [],
+              createdAt: 0,
+              updatedAt: 0,
+              retired: false,
+            }],
+          }
+          const result = yield* design.proposeChanges(delta)
+          const created = result.delta?.addNodes?.[0]
+          return {
+            title: `Created node ${created?.name ?? args.name}`,
+            output: `Node ${created?.name ?? args.name} (${created?.id ?? nodeId}) in context ${args.contextId}`,
+            metadata: { nodeId: created?.id ?? nodeId },
+          }
+        }).pipe(Effect.orDie),
     }
   }),
 )
@@ -261,23 +251,24 @@ export const DesignUpdateNodeTool = Tool.define<
       description: "Update a node's name, semantics, aliases, or context.",
       parameters: UpdateNodeParameters,
       execute: (args, ctx) =>
-        withVersionBump(
-          design,
-          Effect.gen(function* () {
-            const patch = {} as Record<string, unknown>
-            if (args.name !== undefined) patch.name = args.name
-            if (args.defaultSemantics !== undefined) patch.defaultSemantics = args.defaultSemantics
-            if (args.aliases !== undefined) patch.aliases = [...args.aliases]
-            if (args.contextId !== undefined) patch.contextId = args.contextId
-            const node = yield* design.updateNode(args.id, patch as Partial<Omit<DesignTypes.Node, "id" | "createdAt">>)
-            const semanticsPart = node.defaultSemantics ? `; semantics: ${node.defaultSemantics}` : ""
-            return {
-              title: `Updated node ${node.name}`,
-              output: `Node ${node.name} (${args.id})${semanticsPart}`,
-              metadata: { nodeId: args.id },
-            }
-          }),
-        ).pipe(Effect.orDie),
+        Effect.gen(function* () {
+          const patch = {} as Record<string, unknown>
+          if (args.name !== undefined) patch.name = args.name
+          if (args.defaultSemantics !== undefined) patch.defaultSemantics = args.defaultSemantics
+          if (args.aliases !== undefined) patch.aliases = [...args.aliases]
+          if (args.contextId !== undefined) patch.contextId = args.contextId
+          const delta: GraphAgentTypes.GraphDelta = {
+            updateNodes: [{ id: args.id, patch: patch as Partial<DesignTypes.Node> }],
+          }
+          const result = yield* design.proposeChanges(delta)
+          const updated = result.delta?.updateNodes?.[0]
+          const semanticsPart = updated?.patch.defaultSemantics ? `; semantics: ${updated.patch.defaultSemantics}` : ""
+          return {
+            title: `Updated node ${updated?.patch.name ?? args.id}`,
+            output: `Node ${updated?.patch.name ?? args.id} (${args.id})${semanticsPart}`,
+            metadata: { nodeId: args.id },
+          }
+        }).pipe(Effect.orDie),
     }
   }),
 )
@@ -299,17 +290,19 @@ export const DesignRetireNodeTool = Tool.define<
       description: "Mark a node as retired (or unretire it). Retired nodes stay in the graph but are excluded from active design work.",
       parameters: RetireNodeParameters,
       execute: (args, ctx) =>
-        withVersionBump(
-          design,
-          Effect.gen(function* () {
-            const node = yield* design.retireNode(args.id, args.retired)
-            return {
-              title: `${node.retired ? "Retired" : "Unretired"} node ${args.id}`,
-              output: `Node ${args.id}`,
-              metadata: { nodeId: args.id, retired: node.retired },
-            }
-          }),
-        ).pipe(Effect.orDie),
+        Effect.gen(function* () {
+          const delta: GraphAgentTypes.GraphDelta = {
+            updateNodes: [{ id: args.id, patch: { retired: args.retired } }],
+          }
+          const result = yield* design.proposeChanges(delta)
+          const updated = result.delta?.updateNodes?.[0]
+          const retired = updated?.patch.retired ?? args.retired
+          return {
+            title: `${retired ? "Retired" : "Unretired"} node ${args.id}`,
+            output: `Node ${args.id}`,
+            metadata: { nodeId: args.id, retired },
+          }
+        }).pipe(Effect.orDie),
     }
   }),
 )
@@ -330,17 +323,15 @@ export const DesignDeleteNodeTool = Tool.define<
       description: "Permanently delete a node and all its connected edges. Use with caution.",
       parameters: DeleteNodeParameters,
       execute: (args, ctx) =>
-        withVersionBump(
-          design,
-          Effect.gen(function* () {
-            yield* design.deleteNode(args.id)
-            return {
-              title: "Deleted node",
-              output: `Node ${args.id} and its connected edges removed.`,
-              metadata: { nodeId: args.id },
-            }
-          }),
-        ).pipe(Effect.orDie),
+        Effect.gen(function* () {
+          const delta: GraphAgentTypes.GraphDelta = { deleteNodeIds: [args.id] }
+          yield* design.proposeChanges(delta)
+          return {
+            title: "Deleted node",
+            output: `Node ${args.id} and its connected edges removed.`,
+            metadata: { nodeId: args.id },
+          }
+        }).pipe(Effect.orDie),
     }
   }),
 )
@@ -397,26 +388,29 @@ export const DesignCreateEdgeTool = Tool.define<
         "Create or replace an edge between two nodes. Only one edge can exist between a node pair. Use the 'aggregate' prototype for whole-part relationships unless another prototype is clearly more appropriate.",
       parameters: CreateEdgeParameters,
       execute: (args, ctx) =>
-        withVersionBump(
-          design,
-          Effect.gen(function* () {
-            const edge = yield* design.createEdge({
+        Effect.gen(function* () {
+          const delta: GraphAgentTypes.GraphDelta = {
+            addEdges: [{
               leftNodeId: args.leftNodeId,
               rightNodeId: args.rightNodeId,
               prototypeId: args.prototypeId,
               parameters: args.parameters ?? {},
-            })
-            return {
-              title: `Created edge`,
-              output: `Edge ${edge.leftNodeId} --[${edge.prototypeId}]--> ${edge.rightNodeId}`,
-              metadata: {
-                leftNodeId: edge.leftNodeId,
-                rightNodeId: edge.rightNodeId,
-                prototypeId: edge.prototypeId,
-              },
-            }
-          }),
-        ).pipe(Effect.orDie),
+              createdAt: 0,
+              updatedAt: 0,
+            }],
+          }
+          const result = yield* design.proposeChanges(delta)
+          const edge = result.delta?.addEdges?.[0]
+          return {
+            title: `Created edge`,
+            output: `Edge ${edge?.leftNodeId ?? args.leftNodeId} --[${edge?.prototypeId ?? args.prototypeId}]--> ${edge?.rightNodeId ?? args.rightNodeId}`,
+            metadata: {
+              leftNodeId: edge?.leftNodeId ?? args.leftNodeId,
+              rightNodeId: edge?.rightNodeId ?? args.rightNodeId,
+              prototypeId: edge?.prototypeId ?? args.prototypeId,
+            },
+          }
+        }).pipe(Effect.orDie),
     }
   }),
 )
@@ -442,24 +436,32 @@ export const DesignUpdateEdgeTool = Tool.define<
       description: "Update the prototype or parameters of an existing edge.",
       parameters: UpdateEdgeParameters,
       execute: (args, ctx) =>
-        withVersionBump(
-          design,
-          Effect.gen(function* () {
-            const patch = {} as Record<string, unknown>
-            if (args.prototypeId !== undefined) patch.prototypeId = args.prototypeId
-            if (args.parameters !== undefined) patch.parameters = args.parameters
-            const edge = yield* design.updateEdge(args.leftNodeId, args.rightNodeId, patch as Partial<Pick<DesignTypes.Edge, "prototypeId" | "parameters">>)
-            return {
-              title: `Updated edge`,
-              output: `Edge ${edge.leftNodeId} --[${edge.prototypeId}]--> ${edge.rightNodeId}`,
-              metadata: {
-                leftNodeId: edge.leftNodeId,
-                rightNodeId: edge.rightNodeId,
-                prototypeId: edge.prototypeId,
-              },
-            }
-          }),
-        ).pipe(Effect.orDie),
+        Effect.gen(function* () {
+          const patch = {} as Record<string, unknown>
+          if (args.prototypeId !== undefined) patch.prototypeId = args.prototypeId
+          if (args.parameters !== undefined) patch.parameters = args.parameters
+          const delta: GraphAgentTypes.GraphDelta = {
+            updateEdges: [{
+              leftNodeId: args.leftNodeId,
+              rightNodeId: args.rightNodeId,
+              patch: patch as Partial<DesignTypes.Edge>,
+            }],
+          }
+          yield* design.proposeChanges(delta)
+          const edges = yield* design.listEdges()
+          const edge = edges.find(
+            (e) => e.leftNodeId === args.leftNodeId && e.rightNodeId === args.rightNodeId,
+          )
+          return {
+            title: `Updated edge`,
+            output: `Edge ${args.leftNodeId} --[${edge?.prototypeId ?? args.prototypeId}]--> ${args.rightNodeId}`,
+            metadata: {
+              leftNodeId: args.leftNodeId,
+              rightNodeId: args.rightNodeId,
+              prototypeId: edge?.prototypeId ?? args.prototypeId,
+            },
+          }
+        }).pipe(Effect.orDie),
     }
   }),
 )
@@ -481,17 +483,17 @@ export const DesignDeleteEdgeTool = Tool.define<
       description: "Delete an edge between two nodes.",
       parameters: DeleteEdgeParameters,
       execute: (args, ctx) =>
-        withVersionBump(
-          design,
-          Effect.gen(function* () {
-            yield* design.deleteEdge(args.leftNodeId, args.rightNodeId)
-            return {
-              title: "Deleted edge",
-              output: `Edge ${args.leftNodeId} <-> ${args.rightNodeId} removed.`,
-              metadata: { leftNodeId: args.leftNodeId, rightNodeId: args.rightNodeId },
-            }
-          }),
-        ).pipe(Effect.orDie),
+        Effect.gen(function* () {
+          const delta: GraphAgentTypes.GraphDelta = {
+            deleteEdgeKeys: [DesignTypes.edgeKey(args.leftNodeId, args.rightNodeId)],
+          }
+          yield* design.proposeChanges(delta)
+          return {
+            title: "Deleted edge",
+            output: `Edge ${args.leftNodeId} <-> ${args.rightNodeId} removed.`,
+            metadata: { leftNodeId: args.leftNodeId, rightNodeId: args.rightNodeId },
+          }
+        }).pipe(Effect.orDie),
     }
   }),
 )
@@ -518,22 +520,19 @@ export const DesignCreatePrototypeTool = Tool.define<
         "Create a new relation prototype (e.g., aggregate, compose, depend, inherit). Prototypes define the types of edges you can draw between nodes.",
       parameters: CreatePrototypeParameters,
       execute: (args, ctx) =>
-        withVersionBump(
-          design,
-          Effect.gen(function* () {
-            const proto = yield* design.createPrototype({
-              id: args.id,
-              name: args.name,
-              defaultSemantics: args.defaultSemantics,
-              parameterSchema: args.parameterSchema,
-            })
-            return {
-              title: `Created prototype ${proto.name}`,
-              output: `Prototype ${proto.name} (${proto.id})`,
-              metadata: { prototypeId: proto.id },
-            }
-          }),
-        ).pipe(Effect.orDie),
+        Effect.gen(function* () {
+          const proto = yield* design.createPrototype({
+            id: args.id,
+            name: args.name,
+            defaultSemantics: args.defaultSemantics,
+            parameterSchema: args.parameterSchema,
+          })
+          return {
+            title: `Created prototype ${proto.name}`,
+            output: `Prototype ${proto.name} (${proto.id})`,
+            metadata: { prototypeId: proto.id },
+          }
+        }).pipe(Effect.orDie),
     }
   }),
 )
