@@ -40,18 +40,32 @@ export interface GraphDelta {
 export interface NodeInput
   extends Omit<
       DesignTypes.Node,
-      "id" | "kind" | "aliases" | "connectedEdges" | "createdAt" | "updatedAt" | "retired"
+      | "id"
+      | "kind"
+      | "aliases"
+      | "defaultSemantics"
+      | "connectedEdges"
+      | "createdAt"
+      | "updatedAt"
+      | "retired"
     >,
     Partial<
       Pick<
         DesignTypes.Node,
-        "id" | "kind" | "aliases" | "connectedEdges" | "createdAt" | "updatedAt" | "retired"
+        | "id"
+        | "kind"
+        | "aliases"
+        | "defaultSemantics"
+        | "connectedEdges"
+        | "createdAt"
+        | "updatedAt"
+        | "retired"
       >
     > {}
 
 export interface EdgeInput
-  extends Omit<DesignTypes.Edge, "createdAt" | "updatedAt">,
-    Partial<Pick<DesignTypes.Edge, "createdAt" | "updatedAt">> {}
+  extends Omit<DesignTypes.Edge, "parameters" | "createdAt" | "updatedAt">,
+    Partial<Pick<DesignTypes.Edge, "parameters" | "createdAt" | "updatedAt">> {}
 
 export interface Input {
   source: "chat" | "visual-editor"

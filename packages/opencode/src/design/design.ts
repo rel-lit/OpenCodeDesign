@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect"
+import { Clock, Context, Effect, Layer } from "effect"
 import type { Scope } from "effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { InstanceState } from "@/effect/instance-state"
@@ -424,12 +424,67 @@ export const layer = (options?: LayerOptions) =>
       return [parts[0], parts[1]]
     }
 
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+    const isUuid = (value: string): boolean => UUID_REGEX.test(value)
+
     const applyRawDelta = Effect.fn("Design.applyRawDelta")((delta: GraphAgentTypes.GraphDelta) =>
       use((state) =>
         state.store.transaction((txStore) =>
           Effect.gen(function* () {
-            const events: DesignTypes.EventNode[] = []
+            const now = yield* Clock.currentTimeMillis
+
+            const edgeReferencedIds = new Set<string>()
+            for (const edge of delta.addEdges ?? []) {
+              edgeReferencedIds.add(edge.leftNodeId)
+              edgeReferencedIds.add(edge.rightNodeId)
+            }
+            for (const update of delta.updateEdges ?? []) {
+              edgeReferencedIds.add(update.leftNodeId)
+              edgeReferencedIds.add(update.rightNodeId)
+            }
+            for (const key of delta.deleteEdgeKeys ?? []) {
+              const [left, right] = parseEdgeKey(key)
+              edgeReferencedIds.add(left)
+              edgeReferencedIds.add(right)
+            }
+
+            const addNodeIds = new Set(
+              (delta.addNodes ?? []).map((node) => node.id).filter((id): id is string => id !== undefined),
+            )
+
+            const tempIdMap = new Map<string, string>()
+            for (const id of edgeReferencedIds) {
+              if (isUuid(id)) continue
+              if (addNodeIds.has(id)) {
+                tempIdMap.set(id, crypto.randomUUID())
+              }
+            }
+
+            const addNodes: Array<GraphAgentTypes.NodeInput> = []
             for (const node of delta.addNodes ?? []) {
+              const originalId = node.id
+              const id =
+                originalId === undefined
+                  ? crypto.randomUUID()
+                  : tempIdMap.get(originalId) ?? originalId
+              addNodes.push({
+                ...node,
+                id,
+                kind: node.kind ?? "node",
+                aliases: node.aliases ?? [],
+                defaultSemantics: node.defaultSemantics ?? "",
+                connectedEdges: node.connectedEdges ?? [],
+                createdAt: node.createdAt ?? now,
+                updatedAt: node.updatedAt ?? now,
+                retired: node.retired ?? false,
+              })
+            }
+
+            const resolveNodeId = (id: string): string => tempIdMap.get(id) ?? id
+
+            const events: DesignTypes.EventNode[] = []
+            for (const node of addNodes) {
               const created = yield* state.graph.createNode({
                 id: node.id,
                 name: node.name,
@@ -437,6 +492,10 @@ export const layer = (options?: LayerOptions) =>
                 kind: node.kind,
                 defaultSemantics: node.defaultSemantics,
                 aliases: node.aliases ? [...node.aliases] : [],
+                connectedEdges: node.connectedEdges ? [...node.connectedEdges] : [],
+                createdAt: node.createdAt,
+                updatedAt: node.updatedAt,
+                retired: node.retired,
               })
               events.push(
                 yield* state.eventLog.append({ eventType: "node_created", affectedNodeIds: [created.id] }),
@@ -455,32 +514,40 @@ export const layer = (options?: LayerOptions) =>
               )
             }
             for (const edge of delta.addEdges ?? []) {
+              const leftNodeId = resolveNodeId(edge.leftNodeId)
+              const rightNodeId = resolveNodeId(edge.rightNodeId)
               yield* state.graph.createEdge({
-                leftNodeId: edge.leftNodeId,
-                rightNodeId: edge.rightNodeId,
+                leftNodeId,
+                rightNodeId,
                 prototypeId: edge.prototypeId,
-                parameters: { ...edge.parameters },
+                parameters: { ...(edge.parameters ?? {}) },
+                createdAt: edge.createdAt ?? now,
+                updatedAt: edge.updatedAt ?? now,
               })
               events.push(
                 yield* state.eventLog.append({
                   eventType: "edge_created",
-                  affectedNodeIds: [edge.leftNodeId, edge.rightNodeId],
-                  affectedEdgeKeys: [DesignTypes.edgeKey(edge.leftNodeId, edge.rightNodeId)],
+                  affectedNodeIds: [leftNodeId, rightNodeId],
+                  affectedEdgeKeys: [DesignTypes.edgeKey(leftNodeId, rightNodeId)],
                 }),
               )
             }
             for (const update of delta.updateEdges ?? []) {
-              yield* state.graph.updateEdge(update.leftNodeId, update.rightNodeId, update.patch)
+              const leftNodeId = resolveNodeId(update.leftNodeId)
+              const rightNodeId = resolveNodeId(update.rightNodeId)
+              yield* state.graph.updateEdge(leftNodeId, rightNodeId, update.patch)
               events.push(
                 yield* state.eventLog.append({
                   eventType: "edge_updated",
-                  affectedNodeIds: [update.leftNodeId, update.rightNodeId],
-                  affectedEdgeKeys: [DesignTypes.edgeKey(update.leftNodeId, update.rightNodeId)],
+                  affectedNodeIds: [leftNodeId, rightNodeId],
+                  affectedEdgeKeys: [DesignTypes.edgeKey(leftNodeId, rightNodeId)],
                 }),
               )
             }
             for (const key of delta.deleteEdgeKeys ?? []) {
-              const [leftNodeId, rightNodeId] = parseEdgeKey(key)
+              const [left, right] = parseEdgeKey(key)
+              const leftNodeId = resolveNodeId(left)
+              const rightNodeId = resolveNodeId(right)
               yield* state.graph.deleteEdge(leftNodeId, rightNodeId)
               events.push(
                 yield* state.eventLog.append({

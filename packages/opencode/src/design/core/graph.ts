@@ -15,6 +15,10 @@ export interface Interface {
     kind?: string
     defaultSemantics?: string
     aliases?: string[]
+    connectedEdges?: Array<{ leftNodeId: string; rightNodeId: string; prototypeId: string }>
+    createdAt?: number
+    updatedAt?: number
+    retired?: boolean
   }) => Effect.Effect<DesignTypes.Node>
   readonly updateNode: (id: string, input: Partial<Omit<DesignTypes.Node, "id" | "createdAt">>) => Effect.Effect<DesignTypes.Node, GraphEngineError>
   readonly retireNode: (id: string, retired: boolean) => Effect.Effect<DesignTypes.Node, GraphEngineError>
@@ -41,7 +45,9 @@ export interface Interface {
   readonly getPrototype: (id: string) => Effect.Effect<DesignTypes.RelationPrototype | undefined>
   readonly listPrototypes: () => Effect.Effect<DesignTypes.RelationPrototype[]>
 
-  readonly createEdge: (input: Omit<DesignTypes.Edge, "createdAt" | "updatedAt">) => Effect.Effect<DesignTypes.Edge>
+  readonly createEdge: (
+    input: Omit<DesignTypes.Edge, "createdAt" | "updatedAt"> & Partial<Pick<DesignTypes.Edge, "createdAt" | "updatedAt">>,
+  ) => Effect.Effect<DesignTypes.Edge>
   readonly updateEdge: (leftNodeId: string, rightNodeId: string, input: Partial<Pick<DesignTypes.Edge, "prototypeId" | "parameters">>) => Effect.Effect<DesignTypes.Edge, GraphEngineError>
   readonly deleteEdge: (leftNodeId: string, rightNodeId: string) => Effect.Effect<void>
   readonly getEdge: (leftNodeId: string, rightNodeId: string) => Effect.Effect<DesignTypes.Edge | undefined>
@@ -82,10 +88,10 @@ export const makeEngine = Effect.fn("GraphEngine.make")(function* () {
       contextId: input.contextId,
       kind: input.kind ?? "node",
       defaultSemantics: input.defaultSemantics ?? "",
-      connectedEdges: [],
-      createdAt: now(),
-      updatedAt: now(),
-      retired: false,
+      connectedEdges: input.connectedEdges ?? [],
+      createdAt: input.createdAt ?? now(),
+      updatedAt: input.updatedAt ?? now(),
+      retired: input.retired ?? false,
     }
     state.nodes.push(node)
     const ctx = state.contexts.find((c) => c.id === input.contextId)
@@ -209,8 +215,8 @@ export const makeEngine = Effect.fn("GraphEngine.make")(function* () {
       rightNodeId: input.rightNodeId,
       prototypeId: input.prototypeId,
       parameters: input.parameters ?? {},
-      createdAt: now(),
-      updatedAt: now(),
+      createdAt: input.createdAt ?? now(),
+      updatedAt: input.updatedAt ?? now(),
     }
 
     if (existingIndex >= 0) {

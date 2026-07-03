@@ -179,5 +179,47 @@ describe("Design.Service", () => {
       }).pipe(Effect.provide(autoApproveLayer))
     }),
   )
-})
 
+  it.instance("applyRawDelta auto-fills system fields and replaces temporary node ids", () =>
+    Effect.gen(function* () {
+      const design = yield* Design.Service
+      yield* design.init()
+      const ctx = yield* design.createContext({ id: "ctx-fill", name: "Fill" })
+
+      yield* design.applyRawDelta({
+        addNodes: [
+          { name: "NoId", contextId: ctx.id },
+          { id: "temp-1", name: "Temp", contextId: ctx.id },
+        ],
+        addEdges: [{ leftNodeId: "temp-1", rightNodeId: "temp-1", prototypeId: "self" }],
+      })
+
+      const nodes = yield* design.listNodes()
+      expect(nodes.length).toBe(2)
+
+      const noId = nodes.find((n) => n.name === "NoId")
+      expect(noId).toBeDefined()
+      expect(noId!.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+      expect(noId!.kind).toBe("node")
+      expect(noId!.aliases).toEqual([])
+      expect(noId!.defaultSemantics).toBe("")
+      expect(noId!.connectedEdges).toEqual([])
+      expect(noId!.createdAt).toBeGreaterThan(0)
+      expect(noId!.updatedAt).toBeGreaterThan(0)
+      expect(noId!.retired).toBe(false)
+
+      const temp = nodes.find((n) => n.name === "Temp")
+      expect(temp).toBeDefined()
+      expect(temp!.id).not.toBe("temp-1")
+      expect(temp!.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+
+      const edges = yield* design.listEdges()
+      expect(edges.length).toBe(1)
+      expect(edges[0]!.leftNodeId).toBe(temp!.id)
+      expect(edges[0]!.rightNodeId).toBe(temp!.id)
+      expect(edges[0]!.parameters).toEqual({})
+      expect(edges[0]!.createdAt).toBeGreaterThan(0)
+      expect(edges[0]!.updatedAt).toBeGreaterThan(0)
+    }),
+  )
+})

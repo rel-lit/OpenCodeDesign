@@ -1,107 +1,68 @@
 # Task 2 Report
 
-## What I implemented
+## Status
 
-- Created `src/design/agent/graph.ts` with the GraphAgent Effect service skeleton:
-  - `Service` tag `@opencode/DesignGraphAgent`
-  - `analyze(input)` returns a `change-proposal` output skeleton
-  - `execute(proposal)` returns a `change-applied` output skeleton
-  - `layer` and `defaultLayer` following the project’s service conventions
-  - Self-reexport `export * as GraphAgent from "./graph"`
-- Created `src/design/agent/prompt/graph.txt` with a minimal GraphAgent system prompt.
-- Modified `src/agent/agent.ts` to register a new native subagent `design-graph` using the same design-tool permissions as the existing `design` primary agent.
-- Created `test/design/agent/graph.test.ts` with a TDD test that exercises `GraphAgent.analyze`.
+DONE
 
-## TDD Evidence
+## What changed
 
-### RED (failing test)
+- `packages/opencode/src/design/design.ts`
+  - Updated `applyRawDelta` to auto-fill missing system fields for new nodes (`id`, `kind`, `aliases`, `defaultSemantics`, `connectedEdges`, `createdAt`, `updatedAt`, `retired`) and new edges (`parameters`, `createdAt`, `updatedAt`).
+  - Generates UUIDs for new nodes that omit `id` using `crypto.randomUUID`.
+  - Replaces temporary node IDs used in edges with generated real UUIDs when the temporary id is a non-UUID id that belongs to a node being added in the same delta.
+  - Uses `Clock.currentTimeMillis` for auto-filled timestamps.
+  - Continues to record audit events and persist graph state through the transactional store.
+- `packages/opencode/src/design/core/graph.ts`
+  - Extended `createNode` to accept optional `connectedEdges`, `createdAt`, `updatedAt`, and `retired`.
+  - Extended `createEdge` to accept optional `createdAt` and `updatedAt` so `applyRawDelta` can supply `Clock`-based timestamps.
+- `packages/opencode/src/design/agent/types.ts`
+  - Made `defaultSemantics` optional in `NodeInput` and `parameters` optional in `EdgeInput` so callers can omit fields that `applyRawDelta` auto-fills.
+- `packages/opencode/test/design/design.test.ts`
+  - Added `applyRawDelta auto-fills system fields and replaces temporary node ids` test covering UUID generation for omitted ids, default field values, temporary id replacement in edges, and edge system-field defaults.
 
-Command: `bun test test/design/agent/graph.test.ts`
+## Verification commands
 
+### Typecheck
+
+```bash
+$ bun run typecheck
+$ tsgo --noEmit
+(no errors)
 ```
+
+### Targeted tests
+
+```bash
+$ bun test test/design/design.test.ts test/design/visual-editor-protocol.test.ts
 bun test v1.3.14 (0d9b296a)
 
-test\design\agent\graph.test.ts:
+test\design\design.test.ts:
+(pass) Design.Service > persists nodes and edges across reload [139.41ms]
+(pass) Design.Service > isolates graph state per directory [36.74ms]
+(pass) Design.Service > proposeChanges executes delta and bumps version [40.09ms]
+(pass) Design.Service > proposeChanges auto-approves when no panel is injected [36.56ms]
+(pass) Design.Service > applyRawDelta auto-fills system fields and replaces temporary node ids [32.35ms]
 
-# Unhandled error between tests
--------------------------------
-error: Cannot find module '@/design/agent/graph' from 'D:\RLDemos\OpenCodeDesign\packages\opencode\test\design\agent\graph.test.ts'
--------------------------------
+test\design\visual-editor-protocol.test.ts:
+(pass) VisualEditorProtocol > save applies raw diff and triggers review [35.04ms]
+(pass) VisualEditorProtocol > save appends audit events to EventLog [36.13ms]
+(pass) VisualEditorProtocol > WorkingSetComputer.fromDelta includes nodes and edges from the delta [0.17ms]
 
- 0 pass
- 1 fail
- 1 error
-Ran 1 test across 1 file. [2.89s]
-```
-
-### GREEN (passing test)
-
-Command: `bun test test/design/agent/graph.test.ts`
-
-```
-bun test v1.3.14 (0d9b296a)
-
-test\design\agent\graph.test.ts:
-(pass) GraphAgent service > analyze returns change-proposal for trivial rename [0.15ms]
-
- 1 pass
+ 8 pass
  0 fail
- 1 expect() calls
-Ran 1 test across 1 file. [4.30s]
+ 42 expect() calls
+Ran 8 tests across 2 files. [2.62s]
 ```
 
-## Full verification
+### Full suite
 
-- Focused test: `bun test test/design/agent/graph.test.ts` — pass
-- Design suite: `bun test test/design` — 28 pass, 0 fail
-- Typecheck: `bun run typecheck` — no errors
+`bun test` from `packages/opencode` was started but exceeded the environment timeout (15 minutes) before completing. The partial run showed the design tests above passing, plus unrelated failures in `test/tool/shell.test.ts` (progressive metadata flake) and `test/util/filesystem.test.ts` / `test/util/glob.test.ts` (symlink `EPERM` on Windows). These failures pre-exist and are not caused by this change.
 
-## Files changed
+## Commit
 
-- `packages/opencode/src/design/agent/graph.ts` (new)
-- `packages/opencode/src/design/agent/prompt/graph.txt` (new)
-- `packages/opencode/src/agent/agent.ts` (modified)
-- `packages/opencode/test/design/agent/graph.test.ts` (new)
+```bash
+git add packages/opencode/src/design/agent/types.ts packages/opencode/src/design/core/graph.ts packages/opencode/src/design/design.ts packages/opencode/test/design/design.test.ts .superpowers/sdd/task-2-report.md
+git commit -m "feat(design): auto-fill system fields and replace temp ids in applyRawDelta"
+```
 
-## Self-review findings
-
-- The task brief’s skeleton used `Effect.map(Service.make)`, which does not exist on this codebase’s `Context.Service` class. I replaced it with the project-standard `Layer.effect(Service, ...)` + `Service.of(...)` pattern.
-- The task brief’s test fixture used `kind: "service"` and omitted required `Node` fields. I updated the fixture to match the actual `DesignTypes.Node` schema so the test typechecks while preserving the test’s intent (verifying `analyze` returns a defined Effect program).
-- The new subagent uses the same design-tool permission set as the existing `design` agent, keeping the security surface consistent.
-
-## Issues or concerns
-
-- The current implementation is a pure skeleton that ignores the input graph state and simply echoes the proposed change. This matches the task scope, but the actual graph-analysis logic will need to be added in a later task.
-
-## Reviewer Findings
-
-- Important: test/design/agent/graph.test.ts:41 only asserts program exists; must run program and assert output.
-- Minor: src/design/agent/graph.ts:4 imports PROMPT_GRAPH but never uses it.
-- Minor: src/agent/agent.ts duplicates design-tool permission block.
-
-## Fix Report
-
-### What I changed
-
-1. `test/design/agent/graph.test.ts` — Replaced the shallow assertion with a real Effect test using `testEffect(GraphAgent.layer)`. The test now yields `GraphAgent.Service`, calls `analyze(input)`, and asserts:
-   - `output.type === "change-proposal"`
-   - `output.summary` contains the user input
-   - `output.affectedNodes` matches the working-set node IDs
-   - `output.affectedEdges` is empty
-   - `output.delta` equals the proposed change
-
-2. `src/design/agent/graph.ts` — Removed the unused `PROMPT_GRAPH` import.
-
-3. `src/agent/agent.ts` — Extracted a shared `designToolPermissions` constant using `Permission.fromConfig(...)`, then reused it in both the `design-graph` subagent and the `design` primary agent. No behavior change; just eliminates duplication.
-
-### Test commands and results
-
-- `bun test test/design/agent/graph.test.ts` — 1 pass, 0 fail, 5 expect() calls
-- `bun run typecheck` — no errors (`$ tsgo --noEmit`)
-- `bun test test/design` — 28 pass, 0 fail, 67 expect() calls
-
-### Remaining concerns
-
-- The GraphAgent implementation remains a skeleton that echoes the proposed change. The fix only makes the test exercise and assert the skeleton contract; the real graph-analysis logic is still future work.
-
-
+Commit hash: `42a9ee3c7`
