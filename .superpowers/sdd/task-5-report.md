@@ -1,79 +1,52 @@
 # Task 5 Report
 
+## Status
+
+Completed.
+
 ## What I implemented
 
-Created the approval panel state machine in `packages/opencode/src/design/approval-panel.ts`.
+Rewrote `packages/opencode/src/agent/prompt/design.txt` so the Design agent prompt matches the tool-split requirement that all graph mutations go through `design_propose_change({ delta })` as a single batch.
 
-- `ApprovalPanel.make()` returns an imperative state-machine object.
-- States: `idle`, `proposing`, `executing`, `done`, `rejected`.
-- Events/actions: `propose`, `confirm`, `force`, `reject`, `done`, `reset`.
-- `confirm`/`force` require `proposing`; `done` requires `executing`.
-- The machine stores the `GraphAgent.Output` proposal through `proposing`, `executing`, and `done`.
-- Rejection carries a user-supplied reason.
+Key changes to the prompt:
 
-I followed the module-shape convention (flat top-level exports + `export * as ApprovalPanel from "./approval-panel"`) and imported the `GraphAgent` namespace via the self-reexport from `@/design/agent/types`.
+- Added an explicit rule: the agent cannot modify the graph directly; every mutation must be submitted as a single batch through `design_propose_change({ delta })`.
+- Added guidance to build the complete delta first, assembling all node/edge additions, updates, and deletions into one `GraphDelta` object before calling the tool.
+- Listed the system fields the delta can omit for nodes (`id`, `kind`, `aliases`, `defaultSemantics`, `connectedEdges`, `createdAt`, `updatedAt`, `retired`) and edges (`parameters`, `createdAt`, `updatedAt`).
+- Added guidance on temporary IDs: new nodes created in the same delta can use temporary IDs and later `addEdges` entries can reference those same temporary IDs; the system resolves them to real IDs.
+- Reaffirmed that read and working-set tools remain available.
+- Updated the tool usage guide to state that `design_propose_change` is the only write tool and that separate create/update/delete tools should not be used for graph mutations.
+- Applied inline code formatting to tool names throughout the prompt for consistency.
 
-## What I tested and test results
-
-Created `packages/opencode/test/design/approval-panel.test.ts` with 11 tests covering:
-
-- Initial `idle` state
-- `propose` → `proposing` and proposal retention
-- `confirm` → `executing`
-- `force` → `executing`
-- `done` → `done`
-- `reject` → `rejected` with reason
-- `reset` → `idle`
-- Invalid transition errors for `confirm`, `force`, and `done`
-
-Focused test run:
+## Commands run
 
 ```
-bun test test/design/approval-panel.test.ts
-11 pass
-0 fail
-```
-
-Design-related test suite run:
-
-```
-bun test test/design
-43 pass
-0 fail
-```
-
-Typecheck:
-
-```
+cd packages/opencode
 bun run typecheck
-# passed (no errors)
 ```
 
-## TDD Evidence
+Result: passed (no errors).
 
-1. Wrote `test/design/approval-panel.test.ts` first.
-2. Ran the tests and confirmed they failed because `src/design/approval-panel.ts` did not exist:
-   - `error: Cannot find module '@/design/approval-panel'`
-3. Implemented `src/design/approval-panel.ts`.
-4. Re-ran tests; all 11 passed.
-5. Expanded to the full design test suite; all 43 design tests passed.
-6. Ran `bun run typecheck` successfully.
+```
+cd packages/opencode
+bun test
+```
+
+Result: the full suite ran longer than the 300 s timeout and had unrelated failures/timeouts in `test/server/httpapi-file.test.ts` (search endpoint timeout) and `test/server/httpapi-sdk.test.ts` (SDK file search index not ready / instance read routes timeout). The prompt change is text-only and does not affect these server/SDK tests. Typecheck passed cleanly.
 
 ## Files changed
 
-- `packages/opencode/src/design/approval-panel.ts` (new)
-- `packages/opencode/test/design/approval-panel.test.ts` (new)
+- `packages/opencode/src/agent/prompt/design.txt`
 - `.superpowers/sdd/task-5-report.md` (this report)
 
-## Self-review findings
+## Commit
 
-- Code matches the task brief's specified interface and state transitions.
-- Module organization follows the repo convention: no `export namespace`, flat exports, self-reexport.
-- Imported `GraphAgent.Output` through the existing namespace self-reexport rather than a star import.
-- No CLI/Web concerns; this is a desktop-only UI component.
-- `Design.Service` and SQLite storage are untouched.
-- The implementation intentionally does not use Effect because the task brief defines a synchronous, mutable state-machine API and the provided tests exercise that API directly. The global Effect constraints are most relevant to Effectful services; this component has no async/effectful work.
+```
+feat(agent): update design prompt for batched delta proposals
+```
 
-## Issues or concerns
+Hash: `c574bce9d86ee0ab0f40e435a5e04f2137fff99a`
 
-- The global constraints mention using `Effect.gen`/`Effect.fn` and `src/effect/instance-state.ts` for per-project state isolation. The task brief's sample code and tests are synchronous, so I implemented the imperative state machine as specified. If the project later wants to integrate this panel into an Effect service context, it can be wrapped in a service layer without changing the core state machine.
+## Notes
+
+The task brief file at `.superpowers/sdd/task-5-brief.md` describes an approval-panel state machine, which appears to be a different task than the prompt-rewrite task stated in the request. I followed the explicit request to rewrite the design prompt and ran the requested verification commands.
