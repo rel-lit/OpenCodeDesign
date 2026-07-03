@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Effect, Exit, Layer } from "effect"
 import { testEffect } from "../lib/effect"
 import { Design } from "../../src/design/design"
 import { DesignTypes } from "../../src/design/core/types"
@@ -92,12 +92,44 @@ const makeNodeDelta = (contextId: string, name: string, id: string): GraphAgentT
     kind: "node",
     aliases: [],
     defaultSemantics: "",
-    connectedEdges: [],
-    createdAt: 0,
-    updatedAt: 0,
-    retired: false,
   }],
 })
+
+  it.instance("propose_change rejects unknown delta field names", () =>
+    Effect.gen(function* () {
+      const design = yield* Design.Service
+      const tool = yield* DesignProposeChangeTool
+      const ctx = makeCtx()
+
+      yield* design.createContext({ id: "ctx-core", name: "Core" })
+
+      const exit = yield* Effect.exit((yield* Tool.init(tool)).execute(
+        { delta: { edges: [{ leftNodeId: "a", rightNodeId: "b", prototypeId: "depend" }] } as unknown as GraphAgentTypes.GraphDelta },
+        ctx,
+      ))
+
+      expect(Exit.isFailure(exit)).toBe(true)
+    }),
+  )
+
+  it.instance("propose_change accepts only exact delta field names", () =>
+    Effect.gen(function* () {
+      const design = yield* Design.Service
+      const tool = yield* DesignProposeChangeTool
+      const listTool = yield* DesignListNodesTool
+      const ctx = makeCtx()
+
+      yield* design.createContext({ id: "ctx-core", name: "Core" })
+
+      yield* (yield* Tool.init(tool)).execute(
+        { delta: { addNodes: [{ name: "InventoryService", contextId: "ctx-core", id: "inv" }] } },
+        ctx,
+      )
+
+      const result = yield* (yield* Tool.init(listTool)).execute({}, ctx)
+      expect(result.output).toContain("InventoryService")
+    }),
+  )
 
 describe("Design tools", () => {
   it.instance("propose_change creates nodes", () =>
@@ -173,8 +205,6 @@ describe("Design tools", () => {
               rightNodeId: "node-hp",
               prototypeId: "aggregate",
               parameters: { max: 1000 },
-              createdAt: 0,
-              updatedAt: 0,
             }],
           },
         },

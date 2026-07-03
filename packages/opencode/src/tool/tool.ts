@@ -1,5 +1,6 @@
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Effect, Schema } from "effect"
+import type { ParseOptions } from "effect/SchemaAST"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import type { JSONSchema7 } from "@ai-sdk/provider"
 import type { MessageV2 } from "../session/message-v2"
@@ -60,6 +61,7 @@ export interface Def<
   description: string
   parameters: Parameters
   jsonSchema?: JSONSchema7
+  parseOptions?: ParseOptions
   execute(args: Schema.Schema.Type<Parameters>, ctx: Context): Effect.Effect<ExecuteResult<M>>
   formatValidationError?(error: unknown): string
 }
@@ -108,7 +110,7 @@ function wrap<Parameters extends Schema.Decoder<unknown>, Result extends Metadat
       // Compile the parser closure once per tool init; `decodeUnknownEffect`
       // allocates a new closure per call, so hoisting avoids re-closing it for
       // every LLM tool invocation.
-      const decode = Schema.decodeUnknownEffect(toolInfo.parameters)
+      const decode = Schema.decodeUnknownEffect(toolInfo.parameters, toolInfo.parseOptions)
       const execute = toolInfo.execute
       toolInfo.execute = (args, ctx) => {
         const attrs = {

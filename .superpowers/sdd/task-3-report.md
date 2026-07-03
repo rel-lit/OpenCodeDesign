@@ -1,83 +1,59 @@
-# Task 3 Report
+# Task 3 Report: Add design_propose_change tool and remove ChatAgent write tools from registry
 
-## What I Implemented
+## Status
 
-Wired `GraphAgent.analyze()` to perform structured object generation via a mockable LLM helper layer.
+Complete.
 
-- Added `src/design/agent/llm.ts` exporting `DesignAgentLlm.Service` with a `generateObject` method.
-  - Default implementation resolves the configured provider/model through `Provider.Service`, then calls the `ai` SDK `generateObject` with an Effect schema converted to a standard schema + JSON schema.
-  - Returns `{ object: unknown }` so callers can cast to their domain type.
-- Updated `src/design/agent/graph.ts`:
-  - Defined `OutputSchema` (and `GraphDeltaSchema`) matching `GraphAgentTypes.Output`.
-  - `analyze` builds a prompt from `PROMPT_GRAPH` + JSON-serialized input, calls `DesignAgentLlm.generateObject`, and returns the structured result.
-  - `execute` remains as a no-op promotion to `change-applied`.
-  - `GraphAgent.defaultLayer` provides `DesignAgentLlm.defaultLayer`.
-- Updated `src/design/agent/prompt/graph.txt` to the task-specified GraphAgent prompt.
-- Updated `test/design/agent/graph.test.ts`:
-  - Replaced the hardcoded-expectation test with a deterministic mock layer (`Layer.succeed(DesignAgentLlm.Service, ...)`).
-  - The mock returns a specific `change-proposal`; the test asserts the output is exactly that structured object.
+## Summary
 
-## What I Tested and Test Results
+Added a new `design_propose_change` tool that lets ChatAgent submit a complete batch of graph changes as a `GraphDelta`. Removed all graph-mutation tools from the ChatAgent-visible registry while keeping their definitions in `src/tool/design.ts` and exposing them for GraphAgent internal use via a new `GraphAgentDesignTools` export. Updated tests and the ChatAgent prompt/permissions to match the new tool surface.
 
-- Wrote the failing test first; it failed because `src/design/agent/llm` did not exist.
-- Implemented the LLM wiring; the targeted test passed.
-- Ran the full design test suite:
-  - `28 pass, 0 fail, 67 expect() calls`
-- Ran typecheck from `packages/opencode`:
-  - `tsgo --noEmit` passed with no errors.
+## Files changed
 
-## TDD Evidence
+- `packages/opencode/src/tool/design.ts`
+  - Added `DesignProposeChangeTool` (`design_propose_change`).
+  - Added `GraphAgentDesignTools` const export containing the internal mutation tools.
+- `packages/opencode/src/tool/registry.ts`
+  - Imports only ChatAgent-visible design tools.
+  - Registers only ChatAgent-visible design tools.
+- `packages/opencode/test/tool/design.test.ts`
+  - Rewrote tests to exercise `design_propose_change` for create/update/delete of nodes and edges.
+  - Removed direct tests for tools that are no longer ChatAgent-visible.
+- `packages/opencode/test/tool/graph-agent-design.test.ts` (new)
+  - Moved direct tests for mutation tools to a GraphAgent-internal test file.
+- `packages/opencode/src/agent/agent.ts`
+  - Added `design_propose_change: "allow"` to design tool permissions.
+- `packages/opencode/src/agent/prompt/design.txt`
+  - Rewrote workflow and tool guide to recommend `design_propose_change` instead of individual mutation tools.
 
-### RED
-
-Command:
+## Commands run
 
 ```bash
-bun test test/design/agent/graph.test.ts -t "analyze returns structured change-proposal"
+bun test test/tool/design.test.ts test/tool/graph-agent-design.test.ts
+bun test test/tool
+bun run typecheck
 ```
 
-Output:
+## Test results
 
-```
-error: Cannot find module '@/design/agent/llm' from 'D:\RLDemos\OpenCodeDesign\packages\opencode\test\design\agent\graph.test.ts'
+- `test/tool/design.test.ts`: 12 pass, 0 fail.
+- `test/tool/graph-agent-design.test.ts`: 6 pass, 0 fail.
+- `test/tool` suite: 335 pass, 8 fail. The 8 failures are pre-existing Windows/environment issues unrelated to this change (path normalization in external-directory/read, grep/glob timeouts).
+- `bun run typecheck`: clean.
 
- 0 pass
- 1 fail
- 1 error
-```
+Full `bun test` from `packages/opencode` could not complete in this environment (ChildProcess.kill), but the relevant tool tests pass and typecheck is clean.
 
-### GREEN
-
-Command:
+## Commit
 
 ```bash
-bun test test/design/agent/graph.test.ts -t "analyze returns structured change-proposal"
+git add packages/opencode/src/tool/design.ts packages/opencode/src/tool/registry.ts packages/opencode/test/tool/design.test.ts packages/opencode/test/tool/graph-agent-design.test.ts packages/opencode/src/agent/agent.ts packages/opencode/src/agent/prompt/design.txt
+git commit -m "feat(design): add design_propose_change and hide mutation tools from ChatAgent"
 ```
 
-Output:
+Commit hash: `a40ae7df5585d6b2f29d6d3e90c6c046b4468692`
 
-```
-(pass) GraphAgent service > analyze returns structured change-proposal [1.43ms]
+## Notes
 
- 1 pass
- 0 fail
- 5 expect() calls
-```
-
-## Files Changed
-
-- `packages/opencode/src/design/agent/llm.ts` (new)
-- `packages/opencode/src/design/agent/graph.ts`
-- `packages/opencode/src/design/agent/prompt/graph.txt`
-- `packages/opencode/test/design/agent/graph.test.ts`
-- `packages/opencode/.superpowers/sdd/task-3-report.md` (this report)
-
-## Self-Review Findings
-
-- The `as Decoder<unknown>` cast in `llm.ts` is required because `Schema.toStandardSchemaV1` expects `Decoder<unknown, never>` and the widened `Schema<unknown>` interface carries `unknown` decoding services. This matches how `ai` SDK integration is done elsewhere in the codebase.
-- `GraphDeltaSchema` patch fields are typed as `Record<string, unknown>` rather than `Partial<Node>` / `Partial<Edge>`. This is slightly looser but keeps the LLM-output schema simple and avoids fighting Effect Schema's partial API; the resulting type is still assignable to `GraphDelta`.
-- All design tests pass and typecheck is clean.
-
-## Issues or Concerns
-
-None.
+- The `design_propose_change` tool schema uses `Schema.Unknown` for the `delta` field so the existing `GraphDelta` shape can pass through without a precise schema duplication. Validation happens inside `Design.proposeChanges` / `applyRawDelta`.
+- Mutation tools remain defined and exported as `GraphAgentDesignTools` for internal GraphAgent use.
+- The ChatAgent prompt and permissions were updated so the `design` primary agent can actually invoke the new tool.

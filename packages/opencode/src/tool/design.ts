@@ -731,8 +731,36 @@ export const DesignActivateNodeTool = Tool.define<
   }),
 )
 
+const DeltaSchema = Schema.Struct({
+  addNodes: Schema.optional(Schema.Array(Schema.Struct({
+    id: Schema.optional(Schema.String).annotate({ description: "Optional temporary ID for referencing this new node later in the same delta" }),
+    name: Schema.String.annotate({ description: "Node name" }),
+    contextId: Schema.String.annotate({ description: "ID of the bounded context" }),
+    kind: Schema.optional(Schema.String).annotate({ description: "Node kind; defaults to 'node'" }),
+    aliases: Schema.optional(Schema.Array(Schema.String)).annotate({ description: "Alternative names" }),
+    defaultSemantics: Schema.optional(Schema.String).annotate({ description: "Default semantic description" }),
+  }))),
+  updateNodes: Schema.optional(Schema.Array(Schema.Struct({
+    id: Schema.String.annotate({ description: "ID of the node to update" }),
+    patch: Schema.Record(Schema.String, Schema.Unknown).annotate({ description: "Fields to update: name, contextId, defaultSemantics, aliases, retired" }),
+  }))),
+  deleteNodeIds: Schema.optional(Schema.Array(Schema.String).annotate({ description: "IDs of nodes to delete" })),
+  addEdges: Schema.optional(Schema.Array(Schema.Struct({
+    leftNodeId: Schema.String.annotate({ description: "ID of the left/source node (temporary ID allowed)" }),
+    rightNodeId: Schema.String.annotate({ description: "ID of the right/target node (temporary ID allowed)" }),
+    prototypeId: Schema.String.annotate({ description: "ID of the relation prototype" }),
+    parameters: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)).annotate({ description: "Edge parameters" }),
+  }))),
+  updateEdges: Schema.optional(Schema.Array(Schema.Struct({
+    leftNodeId: Schema.String.annotate({ description: "ID of the left/source node" }),
+    rightNodeId: Schema.String.annotate({ description: "ID of the right/target node" }),
+    patch: Schema.Record(Schema.String, Schema.Unknown).annotate({ description: "Fields to update: prototypeId, parameters" }),
+  }))),
+  deleteEdgeKeys: Schema.optional(Schema.Array(Schema.String).annotate({ description: "Edge keys to delete, formatted as 'leftNodeId::rightNodeId'" })),
+}).annotate({ description: "Batch of graph changes. Use exact field names: addNodes, updateNodes, deleteNodeIds, addEdges, updateEdges, deleteEdgeKeys." })
+
 const ProposeChangeParameters = Schema.Struct({
-  delta: Schema.Unknown.annotate({ description: "Batch of graph changes to propose" }),
+  delta: DeltaSchema,
 })
 
 export const DesignProposeChangeTool = Tool.define<
@@ -745,8 +773,9 @@ export const DesignProposeChangeTool = Tool.define<
     const design = yield* Design.Service
     return {
       description:
-        "Propose a complete batch of graph changes (nodes and edges) to be analyzed and applied. Prefer this over individual mutations.",
+        "design_propose_change: the ONLY tool for graph mutations. Submit a complete batch of node and edge changes as a single GraphDelta. Use exact field names: addNodes, updateNodes, deleteNodeIds, addEdges, updateEdges, deleteEdgeKeys.",
       parameters: ProposeChangeParameters,
+      parseOptions: { onExcessProperty: "error" },
       execute: (args, ctx) =>
         Effect.gen(function* () {
           const result = yield* design.proposeChanges(args.delta as GraphAgentTypes.GraphDelta)

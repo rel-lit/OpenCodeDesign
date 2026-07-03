@@ -65,4 +65,4 @@ git add packages/opencode/src/design/agent/types.ts packages/opencode/src/design
 git commit -m "feat(design): auto-fill system fields and replace temp ids in applyRawDelta"
 ```
 
-Commit hash: `42a9ee3c7`
+Commit hash: `83447f862`
