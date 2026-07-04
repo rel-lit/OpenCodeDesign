@@ -51,8 +51,18 @@ export const DesignAskGraphTool = Tool.define(
 )
 
 const RequestChangeParameters = Schema.Struct({
-  intent: Schema.String.annotate({ description: "Natural-language design change intent" }),
+  intent: Schema.String.annotate({
+    description:
+      "A concise 1-2 sentence design change intent. Keep it brief; the full user request is available to the subagent as context.",
+  }),
 })
+
+const MAX_INTENT_PREVIEW_LENGTH = 80
+
+function truncatePreview(text: string, maxLength: number) {
+  if (text.length <= maxLength) return text
+  return text.slice(0, maxLength).replace(/\s+\S*$/, "") + "…"
+}
 
 export const DesignRequestChangeTool = Tool.define(
   "design_request_change",
@@ -78,7 +88,7 @@ export const DesignRequestChangeTool = Tool.define(
           }
           const result = yield* task.execute(
             {
-              description: "Design change request",
+              description: truncatePreview(args.intent, MAX_INTENT_PREVIEW_LENGTH),
               subagent_type: "design-graph",
               prompt: yield* buildGraphAgentPrompt({ design, mode: "judge", request: args.intent, ctx }),
             },
