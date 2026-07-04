@@ -4,49 +4,17 @@ import { testEffect } from "../lib/effect"
 import { Design } from "../../src/design/design"
 import { DesignTypes } from "../../src/design/core/types"
 import { DesignStore } from "../../src/design/store/store"
-import { DesignAgentLlm } from "../../src/design/agent/llm"
-import { GraphAgent } from "../../src/design/agent/graph"
 import { WorkingSetComputer } from "../../src/design/system/working-set-computer"
 import { VisualEditorProtocol } from "../../src/design/visual-editor-protocol"
 
-const mockLlmLayer = Layer.succeed(
-  DesignAgentLlm.Service,
-  DesignAgentLlm.Service.of({
-    generateObject: () => Effect.succeed({ object: {} }),
-  }),
-)
+const designLayer = Design.layer().pipe(Layer.provide(DesignStore.defaultLayer))
 
-const graphAgentBaseLayer = GraphAgent.layer.pipe(Layer.provide(mockLlmLayer))
-
-const mockGraphAgentLayer = Layer.succeed(
-  GraphAgent.Service,
-  GraphAgent.Service.of({
-    analyze: () =>
-      Effect.succeed({
-        type: "change-applied",
-        summary: "Visual editor changes reviewed",
-        affectedNodes: ["new-node"],
-        affectedEdges: [],
-      }),
-    execute: () => Effect.die("unexpected execute"),
-  }),
-)
-
-const designLayer = Design.layer().pipe(
-  Layer.provide(DesignStore.defaultLayer),
-  Layer.provide(graphAgentBaseLayer),
-)
-
-const dependenciesLayer = Layer.merge(designLayer, mockGraphAgentLayer)
-
-const testLayer = VisualEditorProtocol.layer().pipe(
-  Layer.provideMerge(dependenciesLayer),
-)
+const testLayer = VisualEditorProtocol.layer().pipe(Layer.provideMerge(designLayer))
 
 const it = testEffect(testLayer)
 
 describe("VisualEditorProtocol", () => {
-  it.instance("save applies raw diff and triggers review", () =>
+  it.instance("save applies raw diff and returns summary", () =>
     Effect.gen(function* () {
       const design = yield* Design.Service
       const protocol = yield* VisualEditorProtocol.Service
@@ -72,7 +40,8 @@ describe("VisualEditorProtocol", () => {
       }
 
       const result = yield* protocol.save(delta)
-      expect(result.type).toBe("change-applied")
+      expect(result.summary).toContain("Visual editor saved")
+      expect(result.version).toBeGreaterThanOrEqual(1)
 
       const node = yield* design.getNode("new-node")
       expect(node).not.toBeUndefined()

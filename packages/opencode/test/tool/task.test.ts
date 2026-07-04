@@ -4,6 +4,7 @@ import { Database } from "@opencode-ai/core/database/database"
 import { Deferred, Effect, Exit, Fiber, Layer } from "effect"
 import { Agent } from "../../src/agent/agent"
 import { BackgroundJob } from "@/background/job"
+import { Design } from "@/design/design"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Config } from "@/config/config"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
@@ -36,6 +37,9 @@ const layer = (flags: Partial<RuntimeFlags.Info> = {}) =>
   Layer.mergeAll(
     Agent.defaultLayer,
     BackgroundJob.defaultLayer,
+    Layer.mock(Design.Service, {
+      resetTemporaryWorkingSet: () => Effect.succeed({ contextIds: [], nodeIds: [], capacity: 20 }),
+    }),
     EventV2Bridge.defaultLayer,
     Config.defaultLayer,
     CrossSpawnSpawner.defaultLayer,

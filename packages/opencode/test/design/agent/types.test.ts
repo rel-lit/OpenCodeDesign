@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test"
 import { GraphAgent } from "@/design/agent/types"
 
 describe("GraphAgent types", () => {
-  test("input schema accepts chat source with proposed change", () => {
+  test("input schema accepts judge mode with known version", () => {
     const input: GraphAgent.Input = {
+      mode: "judge",
+      request: "rename UserService",
       source: "chat",
       userInput: "rename UserService",
       temporaryWorkingSet: {
@@ -25,12 +27,10 @@ describe("GraphAgent types", () => {
       },
       activeWorkingSet: { contextIds: ["ctx-core"], nodeIds: ["node-5"], capacity: 10 },
       graphState: { contexts: [], nodes: [], edges: [], prototypes: [] },
-      proposedChange: {
-        updateNodes: [{ id: "node-5", patch: { name: "UserServiceV2" } }],
-      },
       knownVersion: 1,
     }
     expect(input.source).toBe("chat")
+    expect(input.mode).toBe("judge")
   })
 
   test("minimal GraphDelta omits system node and edge fields", () => {

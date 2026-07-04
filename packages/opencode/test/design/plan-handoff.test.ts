@@ -3,23 +3,9 @@ import { Effect, Layer } from "effect"
 import { testEffect } from "../lib/effect"
 import { PlanHandoff } from "../../src/design/plan-handoff"
 import { Design } from "../../src/design/design"
-import { DesignAgentLlm } from "../../src/design/agent/llm"
-import { GraphAgent } from "../../src/design/agent/graph"
 import { DesignStore } from "../../src/design/store/store"
 
-const mockLlmLayer = Layer.succeed(
-  DesignAgentLlm.Service,
-  DesignAgentLlm.Service.of({
-    generateObject: () => Effect.succeed({ object: {} }),
-  }),
-)
-
-const mockGraphAgentLayer = GraphAgent.layer.pipe(Layer.provide(mockLlmLayer))
-
-const testLayer = Design.layer().pipe(
-  Layer.provide(DesignStore.defaultLayer),
-  Layer.provide(mockGraphAgentLayer),
-)
+const testLayer = Design.layer().pipe(Layer.provide(DesignStore.defaultLayer))
 
 const it = testEffect(testLayer)
 

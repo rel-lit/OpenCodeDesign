@@ -1,40 +1,12 @@
 import { describe, expect } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Effect, Exit, Layer } from "effect"
 import { testEffect } from "../lib/effect"
 import { Design } from "../../src/design/design"
-import { DesignAgentLlm } from "../../src/design/agent/llm"
-import { GraphAgent } from "../../src/design/agent/graph"
-import * as GraphAgentTypes from "../../src/design/agent/types"
 import { DesignStore } from "../../src/design/store/store"
 import { InstanceStore } from "../../src/project/instance-store"
 import { TestInstance } from "../fixture/fixture"
-import { ApprovalPanel } from "../../src/design/approval-panel"
 
-const autoConfirmPanel = (): ApprovalPanel.Interface => {
-  const panel = ApprovalPanel.make()
-  const originalPropose = panel.propose
-  return {
-    ...panel,
-    propose: (proposal) => {
-      originalPropose(proposal)
-      panel.confirm()
-    },
-  }
-}
-
-const mockLlmLayer = Layer.succeed(
-  DesignAgentLlm.Service,
-  DesignAgentLlm.Service.of({
-    generateObject: () => Effect.succeed({ object: {} }),
-  }),
-)
-
-const mockGraphAgentLayer = GraphAgent.layer.pipe(Layer.provide(mockLlmLayer))
-
-const testLayer = Design.layer().pipe(
-  Layer.provide(DesignStore.defaultLayer),
-  Layer.provide(mockGraphAgentLayer),
-)
+const testLayer = Design.layer().pipe(Layer.provide(DesignStore.defaultLayer))
 
 const it = testEffect(testLayer)
 
@@ -79,107 +51,6 @@ describe("Design.Service", () => {
     }),
   )
 
-  it.instance("proposeChanges executes delta and bumps version", () =>
-    Effect.gen(function* () {
-      const calls = { analyzed: [] as GraphAgentTypes.Input[], executed: [] as GraphAgentTypes.Output[] }
-      const mockGraphAgent = GraphAgent.Service.of({
-        analyze: (input) => {
-          calls.analyzed.push(input)
-          return Effect.succeed({
-            type: "change-proposal" as const,
-            summary: "regression proposal",
-            affectedNodes: input.proposedChange?.updateNodes?.map((n) => n.id) ?? [],
-            affectedEdges: [],
-            delta: input.proposedChange,
-          })
-        },
-        execute: (proposal) =>
-          Effect.gen(function* () {
-            calls.executed.push(proposal)
-            const design = yield* Design.Service
-            const delta = proposal.delta
-            if (!delta) return { ...proposal, type: "change-applied" as const }
-            yield* design.applyRawDelta(delta)
-            yield* design.bumpVersion("chat-agent")
-            return { ...proposal, type: "change-applied" as const }
-          }),
-      })
-
-      const regressionLayer = Design.layer({ makeApprovalPanel: autoConfirmPanel }).pipe(
-        Layer.provide(DesignStore.defaultLayer),
-        Layer.provide(Layer.succeed(GraphAgent.Service, mockGraphAgent)),
-      )
-
-      return yield* Effect.gen(function* () {
-        const design = yield* Design.Service
-        yield* design.init()
-        const ctx = yield* design.createContext({ id: "ctx-regression", name: "Regression" })
-        yield* design.createNode({ id: "node-r", name: "Before", contextId: ctx.id })
-
-        const before = yield* design.getCurrentVersion()
-
-        const result = yield* design.proposeChanges({
-          updateNodes: [{ id: "node-r", patch: { name: "After" } }],
-        })
-
-        expect(result.type).toBe("change-applied")
-        expect(calls.executed.length).toBe(1)
-        const node = yield* design.getNode("node-r")
-        expect(node?.name).toBe("After")
-
-        const after = yield* design.getCurrentVersion()
-        expect(after.sequence).toBe(before.sequence + 1)
-      }).pipe(Effect.provide(regressionLayer))
-    }),
-  )
-
-  it.instance("proposeChanges auto-approves when no panel is injected", () =>
-    Effect.gen(function* () {
-      const calls = { executed: [] as GraphAgentTypes.Output[] }
-      const mockGraphAgent = GraphAgent.Service.of({
-        analyze: (input) =>
-          Effect.succeed({
-            type: "change-proposal" as const,
-            summary: "auto-approve",
-            affectedNodes: [],
-            affectedEdges: [],
-            delta: input.proposedChange,
-          }),
-        execute: (proposal) =>
-          Effect.gen(function* () {
-            calls.executed.push(proposal)
-            const design = yield* Design.Service
-            const delta = proposal.delta
-            if (!delta) return { ...proposal, type: "change-applied" as const }
-            yield* design.applyRawDelta(delta)
-            yield* design.bumpVersion("chat-agent")
-            return { ...proposal, type: "change-applied" as const }
-          }),
-      })
-
-      const autoApproveLayer = Design.layer().pipe(
-        Layer.provide(DesignStore.defaultLayer),
-        Layer.provide(Layer.succeed(GraphAgent.Service, mockGraphAgent)),
-      )
-
-      return yield* Effect.gen(function* () {
-        const design = yield* Design.Service
-        yield* design.init()
-        const ctx = yield* design.createContext({ id: "ctx-auto", name: "Auto" })
-        yield* design.createNode({ id: "node-auto", name: "Before", contextId: ctx.id })
-
-        const result = yield* design.proposeChanges({
-          updateNodes: [{ id: "node-auto", patch: { name: "After" } }],
-        })
-
-        expect(result.type).toBe("change-applied")
-        expect(calls.executed.length).toBe(1)
-        const node = yield* design.getNode("node-auto")
-        expect(node?.name).toBe("After")
-      }).pipe(Effect.provide(autoApproveLayer))
-    }),
-  )
-
   it.instance("applyRawDelta auto-fills system fields and replaces temporary node ids", () =>
     Effect.gen(function* () {
       const design = yield* Design.Service
@@ -220,6 +91,18 @@ describe("Design.Service", () => {
       expect(edges[0]!.parameters).toEqual({})
       expect(edges[0]!.createdAt).toBeGreaterThan(0)
       expect(edges[0]!.updatedAt).toBeGreaterThan(0)
+    }),
+  )
+
+  it.instance("checkChatAgentSync fails after visual editor version bump", () =>
+    Effect.gen(function* () {
+      const design = yield* Design.Service
+      yield* design.init()
+      yield* design.createContext({ id: "ctx-core", name: "Core" })
+      yield* design.bumpVersion("visual-editor")
+
+      const exit = yield* Effect.exit(design.checkChatAgentSync())
+      expect(Exit.isFailure(exit)).toBe(true)
     }),
   )
 })

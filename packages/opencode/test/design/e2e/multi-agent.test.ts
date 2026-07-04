@@ -2,91 +2,53 @@ import { describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import { testEffect } from "../../lib/effect"
 import { Design } from "../../../src/design/design"
-import * as GraphAgentTypes from "../../../src/design/agent/types"
-import { GraphAgent } from "../../../src/design/agent/graph"
 import { DesignStore } from "../../../src/design/store/store"
-import { ApprovalPanel } from "../../../src/design/approval-panel"
 import { testInstanceStoreLayer } from "../../fixture/fixture"
 
-const autoConfirmPanel = (): ApprovalPanel.Interface => {
-  const panel = ApprovalPanel.make()
-  const originalPropose = panel.propose
-  return {
-    ...panel,
-    propose: (proposal) => {
-      originalPropose(proposal)
-      panel.confirm()
-    },
-  }
-}
-
-const makeMockGraphAgent = (calls: { analyzed: GraphAgentTypes.Input[]; executed: GraphAgentTypes.Output[] }) =>
-  GraphAgent.Service.of({
-    analyze: (input) => {
-      calls.analyzed.push(input)
-      return Effect.succeed({
-        type: "change-proposal" as const,
-        summary: "E2E proposal",
-        affectedNodes: input.proposedChange?.updateNodes?.map((n) => n.id) ?? [],
-        affectedEdges: [],
-        delta: input.proposedChange,
-      })
-    },
-    execute: (proposal) =>
-      Effect.gen(function* () {
-        calls.executed.push(proposal)
-        const design = yield* Design.Service
-        const delta = proposal.delta
-        if (!delta) return { ...proposal, type: "change-applied" as const }
-        yield* design.applyRawDelta(delta)
-        yield* design.bumpVersion("chat-agent")
-        return { ...proposal, type: "change-applied" as const }
-      }),
-  })
-
-const makeTestLayer = (calls: { analyzed: GraphAgentTypes.Input[]; executed: GraphAgentTypes.Output[] }) =>
-  Design.layer({ makeApprovalPanel: autoConfirmPanel }).pipe(
-    Layer.provide(DesignStore.defaultLayer),
-    Layer.provide(Layer.succeed(GraphAgent.Service, makeMockGraphAgent(calls))),
-  )
+const testDesignLayer = Design.layer().pipe(Layer.provide(DesignStore.defaultLayer))
 
 const it = testEffect(testInstanceStoreLayer)
 
 describe("Multi-agent E2E", () => {
-  it.instance("full flow: preprocess → propose → confirm → execute → version sync", () =>
+  it.instance("full flow: preprocess → temp working set → accumulate → apply → version sync", () =>
     Effect.gen(function* () {
-      const calls = { analyzed: [] as GraphAgentTypes.Input[], executed: [] as GraphAgentTypes.Output[] }
+      const design = yield* Design.Service
+      yield* design.init()
 
-      return yield* Effect.gen(function* () {
-        const design = yield* Design.Service
-        yield* design.init()
+      const ctx = yield* design.createContext({ id: "ctx-core", name: "Core" })
+      yield* design.createNode({ id: "node-user", name: "UserService", contextId: ctx.id })
 
-        const ctx = yield* design.createContext({ id: "ctx-core", name: "Core" })
-        yield* design.createNode({ id: "node-user", name: "UserService", contextId: ctx.id })
+      const preprocessed = yield* design.preprocessInput("修改 @UserService")
+      expect(preprocessed.processedText).toContain("UserService")
+      expect(preprocessed.temporaryWorkingSet.nodeIds).toContain("node-user")
 
-        const preprocessed = yield* design.preprocessInput("修改 @UserService")
-        expect(preprocessed.processedText).toContain("UserService")
-        expect(preprocessed.temporaryWorkingSet.nodeIds).toContain("node-user")
+      const versionBefore = yield* design.getCurrentVersion()
+      expect(versionBefore.sequence).toBe(0)
 
-        const versionBefore = yield* design.getCurrentVersion()
-        expect(versionBefore.sequence).toBe(0)
+      const sessionID = "session-e2e-1"
+      yield* design.resetTemporaryWorkingSet(sessionID)
+      const temp = yield* design.getTemporaryWorkingSet(sessionID)
+      expect(temp.nodeIds).toContain("node-user")
 
-        const delta: GraphAgentTypes.GraphDelta = {
-          updateNodes: [{ id: "node-user", patch: { name: "UserServiceV2" } }],
-        }
+      yield* design.addAccumulatedNode(sessionID, {
+        name: "NewNode",
+        contextId: ctx.id,
+        kind: "node",
+        aliases: [],
+        defaultSemantics: "",
+      })
 
-        const result = yield* design.proposeChanges(delta)
+      yield* design.updateAccumulatedNode(sessionID, "node-user", { name: "UserServiceV2" })
+      yield* design.applyAccumulatedChanges(sessionID)
 
-        expect(calls.analyzed.length).toBeGreaterThanOrEqual(1)
-        expect(calls.executed.length).toBe(1)
-        expect(result.type).toBe("change-applied")
+      const node = yield* design.getNode("node-user")
+      expect(node?.name).toBe("UserServiceV2")
 
-        const node = yield* design.getNode("node-user")
-        expect(node?.name).toBe("UserServiceV2")
+      const newNode = (yield* design.listNodes()).find((n) => n.name === "NewNode")
+      expect(newNode).toBeDefined()
 
-        const versionAfter = yield* design.getCurrentVersion()
-        expect(versionAfter.sequence).toBe(1)
-      }).pipe(Effect.provide(makeTestLayer(calls)))
-    }),
+      const versionAfter = yield* design.getCurrentVersion()
+      expect(versionAfter.sequence).toBe(1)
+    }).pipe(Effect.provide(testDesignLayer)),
   )
 })

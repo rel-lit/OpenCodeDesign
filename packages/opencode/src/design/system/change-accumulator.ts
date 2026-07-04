@@ -38,7 +38,8 @@ export const make = (graph: GraphEngine.Interface) => {
   const addNode = Effect.fn("DesignChangeAccumulator.addNode")(function* (sessionID: string, input: GraphAgentTypes.NodeInput) {
     ensureSession(sessionID)
     const delta = store.get(sessionID)!
-    delta.addNodes = [...(delta.addNodes ?? []), input]
+    const node = { ...input, id: input.id ?? crypto.randomUUID() }
+    delta.addNodes = [...(delta.addNodes ?? []), node]
     store.set(sessionID, delta)
   })
 
