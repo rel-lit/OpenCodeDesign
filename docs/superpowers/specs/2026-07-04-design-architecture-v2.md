@@ -83,7 +83,7 @@ GraphAgent 是同一个 subagent（`design-graph`），但根据调用时的 `mo
 
 #### 3. 执行模式（`execute`）
 
-- 触发：通常由 `judge` 模式在子会话内部调用；`design_execute_change(plan)` 作为独立工具用于重新执行已保存的 Change Plan 或由 ChatAgent 显式触发。
+- 触发：由 `judge` 模式在子会话内部调用。用户选择 Apply 后，judge 不终止子 Agent，而是直接转入 execute 模式完成写入。
 - 输入：已经审批通过的变更计划（Change Plan）。
 - 行为：
   1. 基于已审批的计划，在子会话中一步步展开细节：
@@ -148,7 +148,7 @@ const designGraphPermissions = Permission.fromConfig({
 })
 ```
 
-注意：禁止 `task`（防止递归）和 `todowrite`。`design_execute_change` 的 plan 来自 `design_request_change` 的审批结果。
+注意：禁止 `task`（防止递归）和 `todowrite`。
 
 ### SearchAgent（检索子 Agent）
 
@@ -194,8 +194,7 @@ ChatAgent 只应该有"向专业 subagent 发请求"的工具，不应该有直�
 | 工具名 | 作用 | 底层实现 |
 |---|---|---|
 | `design_ask_graph` | 向 GraphAgent 请求设计认知。例如："当前设计如何理解空间维度？" | `task({ subagent_type: "design-graph" })`，mode=`cognition` |
-| `design_request_change` | 用自然语言描述变更意图。subagent 会分析、生成 Change Plan、向用户请示，并在用户同意后执行。 | `task({ subagent_type: "design-graph" })`，mode=`judge` |
-| `design_execute_change` | 执行已审批的 Change Plan。用于重新执行之前保存的计划或 judge 返回 needs-clarification 后用户明确要执行的情况。 | `task({ subagent_type: "design-graph" })`，mode=`execute` |
+| `design_request_change` | 用自然语言描述变更意图。subagent 会分析、生成 Change Plan、向用户请示，并在用户同意后自动执行写入。 | `task({ subagent_type: "design-graph" })`，mode=`judge` |
 | `design_summarize_design` | 请求 GraphAgent 返回当前设计的自然语言摘要 | `task({ subagent_type: "design-graph" })`，mode=`summarize` |
 | `design_search_project` | 请求 SearchAgent 检索项目并对比设计 | `task({ subagent_type: "design-search" })` |
 | `design_search_web` | 请求 SearchAgent 联网搜索 | `task({ subagent_type: "design-search" })` |
@@ -215,7 +214,7 @@ ChatAgent 只应该有"向专业 subagent 发请求"的工具，不应该有直�
 - `design_resolve_reference`
 - `design_propose_change`（被 `design_request_change` 取代）
 - 所有 `design_create_*` / `design_update_*` / `design_delete_*`（本来就不应给 ChatAgent）
-- 所有旧的/语义化 GraphAgent 工具也不暴露给 ChatAgent（`design_define_*`, `design_refine_*`, `design_withdraw_*`, `design_get_design`, `design_find_concepts`, `design_get_relations` 等）
+- 所有语义化 GraphAgent 工具也不暴露给 ChatAgent（`design_define_*`, `design_refine_*`, `design_withdraw_*`, `design_get_design`, `design_find_concepts`, `design_get_relations` 等）
 
 ## GraphAgent 输入
 
@@ -254,7 +253,7 @@ interface DesignGraphSubagentInput {
 |---|---|---|
 | `cognition` | `design_ask_graph` | 分析问题，在图中寻找相关概念，返回设计认知 |
 | `judge` | `design_request_change` | 把自然语言意图转成 Change Plan，向用户请示，批准后内部进入 execute 执行 |
-| `execute` | `design_execute_change(plan)` | 基于已审批的 Change Plan 调用写工具执行变更 |
+| `execute` | `judge` 模式内部调用 | 基于已审批的 Change Plan 调用写工具执行变更 |
 | `summarize` | `design_summarize_design` | 基于活跃工作集生成自然语言摘要 |
 | `review-save` | Visual Editor 保存后 | 审查已发生的改动，返回建议 |
 
@@ -468,8 +467,6 @@ GraphAgent 的工具面向**设计语义**，不是原始图数据操作。底�
                           → 再次调用 design_request_change
 ```
 
-如果 judge 模式因计划不完整等原因未发起 question，则返回 `change-proposal`；ChatAgent 可择机调用 `design_execute_change(plan)` 进入 execute 模式。
-
 ### 图摘要请求
 
 ```
@@ -618,7 +615,6 @@ interface DesignSummarizeDesignParameters {}
 - 执行模式仍然需要 LLM 进行工具调用决策（决定调用哪些设计工具以及调用顺序）。
 - 但执行模式不再重新理解意图或生成新的设计，而是基于已审批的 Change Plan 进行工具调用。
 - 这样可以减少 LLM 理解差异对执行结果的影响，但不能完全消除。
-- `design_execute_change(plan)` 作为独立工具保留，用于重新执行已保存的 Change Plan 或在特殊场景下由 ChatAgent 显式触发。
 
 ## 权限设计
 
@@ -779,7 +775,7 @@ Visual Editor 仍然直接写 DB（raw save），因为 GUI 操作本身已是�
 | `design_ask_graph` 入口 | `design.ask_graph.start question=...` |
 | `design_request_change` 入口 | `design.request_change.start intent=...` |
 | `design_summarize_design` 入口 | `design.summarize_design.start` |
-| `design_execute_change` 入口 | `design.execute_change.start planSummary=...` |
+| subagent 内部 judge → execute 切换 | `design-graph.mode.switch from=judge to=execute` |
 | 启动 subagent | `design.subagent.launch mode=... subagent_type=design-graph` |
 | subagent 收到 prompt | `design-graph.subagent.start mode=... activeNodes=N` |
 | subagent 读图 | `design-graph.read tool=... args=...` |
@@ -882,8 +878,7 @@ Your job is to talk with the user about the design of their project. You do NOT 
 
 Instead, you have specialized subagents:
 - `design_ask_graph`: Ask the design-graph subagent for design cognition. Use this when you need to understand what the current design means.
-- `design_request_change`: Ask the design-graph subagent to propose and request approval for a design change. Describe the change in natural language. The subagent will analyze the graph, generate a Change Plan, and ask the user for approval. If the user approves, the subagent will execute the change directly and report back to you.
-- `design_execute_change`: Execute an already-approved Change Plan. Use this only when you already have a Change Plan from a previous `design_request_change` that did not execute, or when the user explicitly asks you to re-execute a saved plan.
+- `design_request_change`: Ask the design-graph subagent to propose and execute a design change. Describe the change in natural language. The subagent will analyze the graph, generate a Change Plan, ask the user for approval, and execute the change if approved. If the user rejects or asks to revise, the subagent will return a result so you can continue the conversation.
 - `design_summarize_design`: Ask the design-graph subagent for a summary of the current design.
 - `design_search_project`: Ask the search subagent to read the project and compare it with the design.
 - `design_search_web`: Ask the search subagent to search the web for relevant design references.
