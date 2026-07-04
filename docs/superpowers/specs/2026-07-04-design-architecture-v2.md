@@ -750,7 +750,7 @@ const designChatPermissions = Permission.fromConfig({
   design_delete_edge: "deny",
   design_create_prototype: "deny",
 
-  // 旧的语义化 GraphAgent 工具也禁止（未来统一用新工具）
+  // 语义化 GraphAgent 工具也禁止给 ChatAgent
   design_define_context: "deny",
   design_define_concept: "deny",
   design_refine_concept: "deny",
@@ -761,6 +761,13 @@ const designChatPermissions = Permission.fromConfig({
   design_get_design: "deny",
   design_find_concepts: "deny",
   design_get_relations: "deny",
+  design_resolve_reference: "deny",
+
+  // 临时工作集工具也禁止给 ChatAgent
+  design_workset_get: "deny",
+  design_workset_add: "deny",
+  design_workset_remove: "deny",
+  design_workset_expand: "deny",
 })
 ```
 
