@@ -69,6 +69,10 @@ export const SessionDesignApprovalDock: Component<{ request: QuestionRequest; on
   return (
     <DockPrompt
       kind="question"
+      ref={(el) => {
+        if (!el) return
+        el.style.setProperty("--question-prompt-max-height", "360px")
+      }}
       header={<div data-slot="question-header-title">{language.t("session.designApproval.title")}</div>}
       footer={
         <div data-slot="design-approval-actions" class="flex w-full items-center justify-between gap-2">
