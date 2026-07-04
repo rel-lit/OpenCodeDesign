@@ -473,10 +473,75 @@ export function getToolInfo(
       }
     }
     default:
+      if (tool.startsWith("design_")) return designInternalToolInfo(i18n, tool, input)
       return {
         icon: "mcp",
         title: tool,
       }
+  }
+}
+
+function designInternalToolInfo(i18n: UiI18n, tool: string, input: Record<string, any>): ToolInfo {
+  const name =
+    typeof input.name === "string" && input.name
+      ? input.name
+      : typeof input.concept === "string" && input.concept
+        ? input.concept
+        : typeof input.from === "string" && typeof input.to === "string"
+          ? `${input.from} → ${input.to}`
+          : undefined
+  const context = typeof input.context === "string" && input.context ? input.context : undefined
+
+  const titles: Record<string, string> = {
+    design_get_design: "获取设计概览",
+    design_get_context: "获取限界上下文",
+    design_get_concept: "获取概念",
+    design_find_concepts: "查找概念",
+    design_get_relations: "获取关系",
+    design_list_prototypes: "列出关系原型",
+    design_resolve_reference: "解析引用",
+    design_workset_get: "获取临时工作集",
+    design_workset_add: "添加到临时工作集",
+    design_workset_remove: "从临时工作集移除",
+    design_workset_expand: "展开临时工作集",
+    design_define_context: "定义限界上下文",
+    design_define_concept: "定义概念",
+    design_refine_concept: "精炼概念",
+    design_withdraw_concept: "撤销概念",
+    design_relate_concepts: "关联概念",
+    design_withdraw_relation: "撤销关系",
+    design_define_relation_prototype: "定义关系原型",
+    design_apply_changes: "应用设计变更",
+    design_clear_changes: "清空设计变更",
+    design_create_context: "创建限界上下文",
+    design_list_contexts: "列出限界上下文",
+    design_update_context: "更新限界上下文",
+    design_create_node: "创建概念节点",
+    design_get_node: "获取概念节点",
+    design_update_node: "更新概念节点",
+    design_retire_node: "退休概念节点",
+    design_delete_node: "删除概念节点",
+    design_find_nodes_by_name: "按名称查找节点",
+    design_create_edge: "创建关系边",
+    design_update_edge: "更新关系边",
+    design_delete_edge: "删除关系边",
+    design_create_prototype: "创建关系原型",
+    design_get_prototype: "获取关系原型",
+    design_list_nodes: "列出概念节点",
+    design_list_edges: "列出关系边",
+    design_show_working_set: "查看工作集",
+    design_activate_context: "激活上下文",
+    design_activate_node: "激活概念",
+    design_get_state: "获取设计状态",
+    design_propose_change: "提议设计变更",
+  }
+
+  const subtitle = name ? (context ? `${name} · ${context}` : name) : context
+
+  return {
+    icon: "branch",
+    title: titles[tool] ?? tool,
+    subtitle,
   }
 }
 
@@ -1899,7 +1964,11 @@ function designSubagentTitle(i18n: UiI18n, subagentType: string) {
 }
 
 function designSubagentSubtitle(input: Record<string, any>) {
-  return input.question ?? input.intent ?? input.query ?? ""
+  const raw = input.question ?? input.intent ?? input.query ?? ""
+  const max = 80
+  if (typeof raw !== "string") return ""
+  if (raw.length <= max) return raw
+  return raw.slice(0, max).replace(/\s+\S*$/, "") + "…"
 }
 
 function DesignSubagentCard(props: ToolProps) {
@@ -1943,6 +2012,7 @@ function DesignSubagentCard(props: ToolProps) {
     <div data-component="task-tool-card">
       <div data-slot="basic-tool-tool-info-structured">
         <div data-slot="basic-tool-tool-info-main">
+          <Icon name="task" size="small" />
           <Show when={running()}>
             <span data-component="task-tool-spinner" style={{ color: "var(--icon-interactive-base)" }}>
               <Spinner />
