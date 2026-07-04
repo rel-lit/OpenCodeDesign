@@ -5,6 +5,7 @@ import { SessionPermissionDock } from "@/pages/session/composer/session-permissi
 import { SessionQuestionDock } from "@/pages/session/composer/session-question-dock"
 import { SessionFollowupDock } from "@/pages/session/composer/session-followup-dock"
 import { SessionRevertDock } from "@/pages/session/composer/session-revert-dock"
+import { SessionDesignApprovalDock, isDesignApprovalRequest } from "@/pages/session/composer/session-design-approval-dock"
 import { SessionTodoDock } from "@/pages/session/composer/session-todo-dock"
 import type { SessionComposerRegionController } from "./session-composer-region-controller"
 
@@ -39,7 +40,12 @@ export function SessionComposerRegion(props: {
         <Show when={controller.state.questionRequest()} keyed>
           {(request) => (
             <div>
-              <SessionQuestionDock request={request} onSubmit={controller.onResponseSubmit} />
+              <Show
+                when={isDesignApprovalRequest(request)}
+                fallback={<SessionQuestionDock request={request} onSubmit={controller.onResponseSubmit} />}
+              >
+                <SessionDesignApprovalDock request={request} onSubmit={controller.onResponseSubmit} />
+              </Show>
             </div>
           )}
         </Show>
