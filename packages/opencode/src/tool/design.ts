@@ -42,7 +42,7 @@ export const DesignAskGraphTool = Tool.define(
             {
               description: "Design cognition",
               subagent_type: "design-graph",
-              prompt: buildGraphAgentPrompt({ mode: "cognition", request: args.question, ctx }),
+              prompt: yield* buildGraphAgentPrompt({ design, mode: "cognition", request: args.question, ctx }),
             },
             ctx,
           )
@@ -86,7 +86,7 @@ export const DesignRequestChangeTool = Tool.define(
             {
               description: "Design change request",
               subagent_type: "design-graph",
-              prompt: buildGraphAgentPrompt({ mode: "judge", request: args.intent, ctx }),
+              prompt: yield* buildGraphAgentPrompt({ design, mode: "judge", request: args.intent, ctx }),
             },
             ctx,
           )
@@ -128,7 +128,12 @@ export const DesignSummarizeDesignTool = Tool.define(
             {
               description: "Design summary",
               subagent_type: "design-graph",
-              prompt: buildGraphAgentPrompt({ mode: "summarize", request: "Summarize the current design.", ctx }),
+              prompt: yield* buildGraphAgentPrompt({
+                design,
+                mode: "summarize",
+                request: "Summarize the current design.",
+                ctx,
+              }),
             },
             ctx,
           )
@@ -209,14 +214,35 @@ export const DesignSearchWebTool = Tool.define(
 )
 
 function buildGraphAgentPrompt(input: {
+  design: Design.Interface
   mode: "cognition" | "judge" | "summarize" | "review-save"
   request: string
   ctx: Tool.Context
-}): string {
-  return JSON.stringify({
-    mode: input.mode,
-    request: input.request,
-    sessionID: input.ctx.sessionID,
+}): Effect.Effect<string> {
+  return Effect.gen(function* () {
+    const activeWs = yield* input.design.listWorkingSet()
+    const graphState = yield* input.design.getState()
+    const version = yield* input.design.getCurrentVersion()
+    const temporaryWorkingSet = yield* input.design.getTemporaryWorkingSet(input.ctx.sessionID)
+    return JSON.stringify({
+      mode: input.mode,
+      request: input.request,
+      source: "chat" as const,
+      userInput: input.request,
+      activeWorkingSet: {
+        contextIds: activeWs.contextIds,
+        nodeIds: activeWs.nodeIds,
+        capacity: graphState.workingSet?.capacity ?? 20,
+      },
+      temporaryWorkingSet,
+      graphState: {
+        contexts: graphState.contexts,
+        nodes: graphState.nodes,
+        edges: graphState.edges,
+        prototypes: graphState.prototypes,
+      },
+      knownVersion: version.sequence,
+    })
   })
 }
 
