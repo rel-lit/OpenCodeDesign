@@ -115,6 +115,8 @@ export const dict: Record<string, string> = {
   "ui.tool.glob": "Glob",
   "ui.tool.grep": "Grep",
   "ui.tool.task": "Task",
+  "ui.tool.designGraph": "Design Graph Agent",
+  "ui.tool.designSearch": "Design Search Agent",
   "ui.tool.webfetch": "Webfetch",
   "ui.tool.websearch": "Web Search",
   "ui.tool.shell": "Shell",

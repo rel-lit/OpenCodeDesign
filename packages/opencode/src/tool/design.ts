@@ -40,7 +40,10 @@ export const DesignAskGraphTool = Tool.define(
           return {
             title: "Design cognition",
             output: result.output,
-            metadata: { result } as Record<string, unknown>,
+            metadata: {
+              ...result.metadata,
+              subagent_type: "design-graph",
+            } as Record<string, unknown>,
           }
         }),
     }
@@ -84,7 +87,10 @@ export const DesignRequestChangeTool = Tool.define(
           return {
             title: "Design change request",
             output: result.output,
-            metadata: { result } as Record<string, unknown>,
+            metadata: {
+              ...result.metadata,
+              subagent_type: "design-graph",
+            } as Record<string, unknown>,
           }
         }),
     }
@@ -122,7 +128,10 @@ export const DesignSummarizeDesignTool = Tool.define(
           return {
             title: "Design summary",
             output: result.output,
-            metadata: { result } as Record<string, unknown>,
+            metadata: {
+              ...result.metadata,
+              subagent_type: "design-graph",
+            } as Record<string, unknown>,
           }
         }),
     }
@@ -155,7 +164,10 @@ export const DesignSearchProjectTool = Tool.define(
           return {
             title: "Design project search",
             output: result.output,
-            metadata: { result } as Record<string, unknown>,
+            metadata: {
+              ...result.metadata,
+              subagent_type: "design-search",
+            } as Record<string, unknown>,
           }
         }),
     }
@@ -188,7 +200,10 @@ export const DesignSearchWebTool = Tool.define(
           return {
             title: "Design web search",
             output: result.output,
-            metadata: { result } as Record<string, unknown>,
+            metadata: {
+              ...result.metadata,
+              subagent_type: "design-search",
+            } as Record<string, unknown>,
           }
         }),
     }

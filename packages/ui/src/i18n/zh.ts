@@ -162,6 +162,8 @@ export const dict = {
   "ui.fileSearch.nextMatch": "下一个",
   "ui.fileSearch.close": "关闭搜索",
   "ui.tool.task": "任务",
+  "ui.tool.designGraph": "设计图智能体",
+  "ui.tool.designSearch": "设计搜索智能体",
   "ui.tool.skill": "技能",
   "ui.basicTool.called": "调用了 `{{tool}}`",
   "ui.toolErrorCard.failed": "失败",
