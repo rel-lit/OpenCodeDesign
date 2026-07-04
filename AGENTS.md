@@ -4,6 +4,16 @@
 - The default branch in this repo is `dev`.
 - Local `main` ref may not exist; use `dev` or `origin/dev` for diffs.
 
+## Tool Usage Discipline
+
+- Always prefer edit for existing files. Only use write when creating a new file.
+- Read files with the read tool only; do not use shell commands or scripts to inspect file contents.
+- Before every read or edit, explicitly verify the target file path to avoid operating on the wrong file.
+- When working across multiple files, confirm the file path out loud before each operation.
+- If edit fails because oldString is not found, stop and re-read the file. Do not bypass edit with shell scripts, write, or any other command.
+- If edit fails repeatedly, the most common cause is that the file read with read and the file being edited are not the same. Re-read the target file and verify the filePath.
+- Never use shell scripts or external commands to modify file contents.
+
 ## Environment Constraints
 
 Unless explicitly stated otherwise, all subsequent implementation discussions, debugging, verification, and builds in this repo assume:
