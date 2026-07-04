@@ -104,7 +104,7 @@ export const SessionDesignApprovalDock: Component<{ request: QuestionRequest; on
         </div>
       }
     >
-      <div data-slot="design-approval-body" class="overflow-auto">
+      <div data-slot="design-approval-body" class="overflow-auto" style={{ "max-height": "240px" }}>
         <Show when={body().trim()} fallback={<div data-slot="design-approval-empty" />}>
           <Markdown text={body()} />
         </Show>
