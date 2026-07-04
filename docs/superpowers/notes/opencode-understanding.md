@@ -246,6 +246,11 @@ const differentModel = `${model.providerID}/${model.id}` !== `${msg.info.provide
 | `packages/opencode/src/permission/index.ts` | 权限服务，发布 `permission.asked` 事件 |
 | `packages/opencode/src/tool/task.ts` | `task` 工具，启动 subagent 子会话 |
 | `packages/opencode/src/agent/agent.ts` | agent 注册，包含 `mode: "subagent"` |
+| `packages/opencode/src/agent/subagent-permissions.ts` | subagent 会话权限派生规则 |
+| `packages/opencode/src/tool/registry.ts` | 工具注册表，按 agent permission 过滤可用工具 |
+| `packages/opencode/src/background/job.ts` | 后台 job 服务，subagent 前台/后台执行基础 |
+| `packages/opencode/src/question/index.ts` | 问题服务，发布 `question.asked` 事件 |
+| `packages/opencode/src/permission/index.ts` | 权限服务，发布 `permission.asked` 事件 |
 | `packages/opencode/src/session/session.ts` | 会话服务，`updatePart`/`updatePartDelta` 持久化并发布事件 |
 | `packages/opencode/src/event-v2-bridge.ts` | OpenCode 事件发布边界，附加 location |
 
@@ -387,46 +392,212 @@ yield* session.updatePart({
 
 ### 8.1 什么是 Subagent
 
-在 OpenCode 中，subagent 是一种特殊的 agent，注册时 `mode: "subagent"`。它不能被用户直接选为默认主 agent，只能由其他 agent 通过 `task` 工具调用。
+在 OpenCode 中，subagent 是一种特殊的 agent，注册时 `mode: "subagent"`。它不能被用户直接选为默认主 agent，只能由其他 agent 通过 `task` 工具调用，或在 CLI/TUI 中通过 `@agent-name` 命令触发。
 
-注册位置：`packages/opencode/src/agent/agent.ts` 中通过 `Agent.register(...)` 或配置生成。subagent 和普通 agent 的区别主要在于：
+注册位置：`packages/opencode/src/agent/agent.ts` 中通过硬编码 `Agent.Info` 对象或配置生成。subagent 和普通 agent 的核心区别：
 
-- `mode: "subagent"`。
-- 默认不出现在用户可选 agent 列表中。
-- 可以有自己的系统 prompt、模型覆盖、工具集、权限规则。
+| 属性 | primary agent | subagent |
+|------|--------------|----------|
+| `mode` | `"primary"` / `"all"` | `"subagent"` / `"all"` |
+| 用户可选 | 是 | 否（`mode !== "subagent"` 才可见） |
+| 启动方式 | 用户选择或默认 | 只能由 `task` 工具或 subtask part 启动 |
+| 权限规则 | 继承用户配置 | 由 `deriveSubagentSessionPermission` 派生 |
+| 输出可见性 | 直接渲染在当前会话 | 写入独立子会话，结果回注父会话 |
 
-### 8.2 `task` 工具如何启动 Subagent
+### 8.2 注册方式
 
-`packages/opencode/src/tool/task.ts` 实现 `task` 工具：
-
-1. 解析 `subagent_type`，从 `Agent.Service` 获取对应 agent 配置。
-2. 创建一个新的子会话（`Session.create({ parentID: ctx.sessionID, agent: next.name, ... })`）。
-3. 把 prompt 解析为 parts，调用 `ops.prompt({ sessionID: nextSession.id, agent: next.name, parts })`。
-4. 子会话开始运行，子 agent 的 LLM 调用、工具调用、reasoning 都会写入子会话的消息 part。
-5. 完成后把结果注入父会话。
-
-关键代码结构：
+以 `design-graph` 和 `design-search` 为例：
 
 ```ts
-const nextSession = yield* sessions.create({
-  parentID: ctx.sessionID,
-  title: params.description + ` (@${next.name} subagent)`,
-  agent: next.name,
-  permission: [...],
-})
-// ...
-const result = yield* ops.prompt({ sessionID: nextSession.id, agent: next.name, parts })
+// packages/opencode/src/agent/agent.ts:179-209
+const graphAgentInfo: Info = {
+  name: "design-graph",
+  description: "Analyzes design graphs, generates change proposals, and executes approved writes.",
+  mode: "subagent",
+  native: true,
+  permission: Permission.merge(defaults, designToolPermissions, user),
+  prompt: PROMPT_GRAPH,
+  options: {},
+}
+
+const searchAgentInfo: Info = {
+  name: "design-search",
+  description: "Searches the codebase against a design graph summary and returns a summary report and diff analysis.",
+  mode: "subagent",
+  native: true,
+  permission: Permission.merge(defaults, readonlyPermissions, user),
+  prompt: PROMPT_SEARCH,
+  options: {},
+}
 ```
 
-### 8.3 Subagent 的可见性
+`permission` 字段决定 subagent 被允许/拒绝使用哪些工具。`prompt` 字段作为该 agent 的系统 prompt。`model` 字段可选，未指定时继承调用它的父 agent 的模型。
 
-由于 subagent 运行在独立会话中，它的所有输出（reasoning、tool、text）都会自动持久化并同步到 GUI。桌面端可以在子会话标签页中看到完整过程。父会话中则通过最终的 synthetic message 看到结果摘要。
+### 8.3 `task` 工具如何启动 Subagent
+
+`packages/opencode/src/tool/task.ts` 实现 `task` 工具，参数结构：
+
+```ts
+{
+  description: string           // 3-5 词任务描述，会作为子会话标题
+  prompt: string                // 给 subagent 的具体指令
+  subagent_type: string         // agent 名称，如 "design-graph"
+  task_id?: string              // 可选，恢复已有子会话
+  command?: string              // 触发来源命令
+  background?: boolean          // 是否后台运行（实验性）
+}
+```
+
+执行流程：
+
+1. **权限自检**：调用 `ctx.ask({ permission: "task", patterns: [subagent_type], always: ["*"] })`，询问用户是否允许调用该 subagent（除非 `bypassAgentCheck`）。
+2. **获取 agent 配置**：`agent.get(params.subagent_type)`。
+3. **派生子会话权限**：`deriveSubagentSessionPermission({ parentSessionPermission, subagent })`。
+4. **创建子会话**：`Session.create({ parentID: ctx.sessionID, agent: next.name, permission: childPermission })`。
+5. **解析 prompt**：`ops.resolvePromptParts(params.prompt)` 把 prompt 字符串转成 parts。
+6. **运行子会话**：`ops.prompt({ sessionID: nextSession.id, agent: next.name, parts })`。
+7. **提取结果**：取子会话最后一条 `type: "text"` part 的 text。
+8. **回注父会话**：把结果包成 XML 格式（`<task id="..." state="completed"><task_result>...</task_result></task>`）返回给父 agent。
+
+### 8.4 Subagent 权限派生规则
+
+`packages/opencode/src/agent/subagent-permissions.ts`：
+
+```ts
+export function deriveSubagentSessionPermission(input: {
+  parentSessionPermission: PermissionV1.Ruleset
+  subagent: Agent.Info
+}): PermissionV1.Ruleset {
+  const canTask = input.subagent.permission.some((rule) => rule.permission === "task")
+  const canTodo = input.subagent.permission.some((rule) => rule.permission === "todowrite")
+  return [
+    ...input.parentSessionPermission.filter(
+      (rule) => rule.permission === "external_directory" || rule.action === "deny",
+    ),
+    ...(canTodo ? [] : [{ permission: "todowrite", pattern: "*", action: "deny" }]),
+    ...(canTask ? [] : [{ permission: "task", pattern: "*", action: "deny" }]),
+  ]
+}
+```
+
+派生规则说明：
+
+- 父会话的 `deny` 规则和 `external_directory` 规则会传递给子会话。
+- 如果 subagent 自身 permission 没有显式允许 `todowrite`，则默认拒绝所有 `todowrite`。
+- 如果 subagent 自身 permission 没有显式允许 `task`，则默认拒绝所有 `task`（防止子 agent 无限递归创建子 agent）。
+
+此外 `task.ts` 还会追加：
+
+- `experimental.primary_tools` 中配置的默认拒绝工具。
+- 如果 subagent 未声明 `task` 权限，额外拒绝 `task`。
+- 如果 subagent 未声明 `todowrite` 权限，额外拒绝 `todowrite`。
+
+这意味着 subagent 的工具集由**自身 permission + 父会话拒绝规则 + task 工具默认防御规则**共同决定。
+
+### 8.5 Subagent 如何暴露给 LLM
+
+`packages/opencode/src/tool/registry.ts:311-324` 的 `describeTask` 会把所有 mode 不是 `"primary"` 的 agent 列出，并过滤掉当前 agent permission 中 `task:<agent>` 为 `deny` 的项：
+
+```ts
+const items = (yield* agents.list()).filter((item) => item.mode !== "primary")
+const filtered = items.filter(
+  (item) => Permission.evaluate("task", item.name, agent.permission).action !== "deny",
+)
+```
+
+最终附加在 `task` 工具的描述里，成为 LLM 可调用的 subagent 列表。LLM 不需要知道 subagent 内部实现，只需要调用 `task` 工具并传入 `subagent_type`。
+
+### 8.6 两种启动路径：命令式 vs 工具式
+
+#### A. 命令式启动（CLI/TUI 中 `@design-graph`）
+
+`packages/opencode/src/session/prompt.ts:1438-1449`：
+
+```ts
+const isSubtask = (agent.mode === "subagent" && cmd.subtask !== false) || cmd.subtask === true
+const parts = isSubtask
+  ? [{
+      type: "subtask",
+      agent: agent.name,
+      description: cmd.description ?? "",
+      command: input.command,
+      model: { providerID: taskModel.providerID, modelID: taskModel.modelID },
+      prompt: templateParts.find((y) => y.type === "text")?.text ?? "",
+    }]
+  : [...uniqueTemplateParts, ...(input.parts ?? [])]
+```
+
+当用户输入 `@design-graph 分析这个图` 时，系统会生成一个 `type: "subtask"` 的 user part。主循环 `loop()` 发现 `task.type === "subtask"` 时，调用 `handleSubtask()`，内部和 `task` 工具一样走 `TaskTool.execute()`。
+
+#### B. 工具式启动（LLM 调用 `task`）
+
+主 agent 在 tool call 中调用 `task`，`task.ts` 创建子会话并运行。父 agent 的当前 assistant message 里会留下一个 `type: "tool"` part，状态为 completed，output 是 XML 包装的结果。
+
+### 8.7 前台 vs 后台执行
+
+`task.ts` 支持两种模式：
+
+- **前台（默认）**：`runInBackground === false`。父 agent 的 fiber 阻塞等待子会话完成，子会话通过 `background.start()` + `background.wait()` 运行，但 `Effect.acquireUseRelease` 保证父会话在子会话结束后才继续。
+- **后台**：`runInBackground === true`（需要 `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`）。子会话作为后台 job 运行，`task` 工具立即返回 "running" 状态，后台完成后通过 `inject()` 向父会话追加一条 synthetic user message 触发后续处理。
+
+对 Design 模式而言，默认应使用**前台模式**，因为 GraphAgent 的分析结果必须立即返回给 ChatAgent 才能继续审批流程。
+
+### 8.8 结果如何返回父会话
+
+前台模式下：
+
+1. `runTask()` 取子会话最后一条 `text` part 作为 `text`。
+2. `renderOutput()` 包装成 XML：
+   ```xml
+   <task id="<sessionID>" state="completed">
+     <task_result>子 agent 最终文本输出</task_result>
+   </task>
+   ```
+3. 作为 `task` 工具的 `output` 返回给父 agent。
+4. 父 agent 的下一步 prompt 中，该 XML 作为 tool result 出现在 assistant message 的 tool part 里。
+
+因此，subagent 的结果完全依赖**最终 text part 的内容**。如果 subagent 需要返回结构化数据，应该让 subagent 的 system prompt 强制它输出 JSON/XML，再由父 agent 解析。
+
+### 8.9 `subtask` Part 在历史中的表示
+
+`packages/opencode/src/session/message-v2.ts:234-239`：
+
+```ts
+if (part.type === "subtask") {
+  userMessage.parts.push({
+    type: "text",
+    text: "The following tool was executed by the user",
+  })
+}
+```
+
+在把会话历史转成模型消息时，`subtask` part 被降级成普通 text part，内容固定为 "The following tool was executed by the user"。这是为了让不支持自定义 part 类型的模型能继续理解上下文，但会丢失 subtask 的元数据（agent、description、prompt）。
+
+### 8.10 Subagent 的可见性
+
+由于 subagent 运行在独立会话中，它的所有输出自动持久化并同步到 GUI：
+
+- 桌面端会话列表会出现一个子会话标签，标题形如 `"description (@design-graph subagent)"`。
+- 子会话内部包含完整的 reasoning、tool call、text 时间线。
+- 父会话中只看到一个 `task` tool part 的结果摘要。
 
 这是 OpenCode 当前唯一“官方”的让非主 agent 工作过程可见的机制。
 
-### 8.4 与设计模式相关的结论
+### 8.11 对 Design 模式的启示
 
-- 如果希望 GraphAgent 的分析过程、工具调用过程对用户可见，**最直接的方式是把它注册为 subagent**，用 `task` 工具调用。
-- 作为内部 Effect Service 的 GraphAgent 不会自动产生 session part；必须手动调用 `Session.Service.updatePart`。
-- subagent 路径会引入额外的会话生命周期、权限规则和结果回注逻辑，但省去了手写事件流和 part 持久化。
+| 能力 | 内部 Effect Service（当前 GraphAgent） | 原生 Subagent（方向 A） |
+|------|--------------------------------------|------------------------|
+| 过程可见性 | 必须手动 `Session.Service.updatePart` | 自动持久化到子会话 |
+| 权限隔离 | 无，继承父 agent 全部能力 | 由 `permission` 字段精确控制 |
+| 用户审批 | 需自定义面板/逻辑 | 可复用 `question.ask` / `Permission.Service` |
+| 并发/后台 | 需要自行管理 fiber | `task` 工具原生支持前台/后台 |
+| 结果结构化 | 任意 Effect 返回值 | 依赖最终 text part，需 prompt 约束 |
+| 生命周期 | 同步函数调用 | 独立 session + background job |
+
+**关键结论**：
+
+- 如果希望 GraphAgent 的分析/工具调用过程对用户可见，**应把它改为原生 subagent**，通过 `task` 工具调用。
+- 要让 subagent 在写入 Design DB 前必须经过用户批准，可以：**拒绝给 subagent 分配 DB 写入工具，只给它返回 delta proposal 的能力**；父 agent 拿到 proposal 后，自己调用 `design_propose_change`（需要父 agent 权限允许），或者由父 agent 触发 `question.ask` 显式询问用户。
+- 也可以让 subagent 拥有 `question.ask` 权限，由 subagent 在分析完成后直接询问用户确认，再把确认结果带回父会话。但这会让审批状态分散在子会话中，增加同步复杂度。
+- 最佳实践是：**subagent 只读/只分析，返回结构化 delta；父 agent 统一负责审批和写入**。这样权限边界清晰，审批流程集中在主会话。
 
