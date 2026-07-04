@@ -143,6 +143,12 @@ const designGraphPermissions = Permission.fromConfig({
   // 引用解析
   design_resolve_reference: "allow",
 
+  // 临时工作集工具（子 Agent 私有）
+  design_workset_get: "allow",
+  design_workset_add: "allow",
+  design_workset_remove: "allow",
+  design_workset_expand: "allow",
+
   // 向用户提问（judge 模式用 question.ask 发起审批）
   question: "allow",
 })
@@ -341,6 +347,12 @@ Change Plan 是 judge 模式的输出，只描述核心设计决策，不展开�
 
 ```typescript
 interface ChangePlan {
+  // 原始变更意图（来自 ChatAgent 的自然语言描述）
+  intent: string
+
+  // 为什么这个变更是合理的
+  rationale: string
+
   // 核心设计决策摘要
   summary: string
 
@@ -429,6 +441,7 @@ GraphAgent 的工具面向**设计语义**，不是原始图数据操作。底�
 | `design_find_concepts(query)` | 按名称/别名/语义搜索概念 |
 | `design_get_relations(concept_id)` | 获取一个概念的关系 |
 | `design_list_prototypes` | 列出关系原型 |
+| `design_resolve_reference(query)` | 解析模糊引用，返回最可能匹配的节点/上下文 |
 
 ### 临时工作集工具（子 Agent 私有）
 
@@ -469,9 +482,9 @@ GraphAgent 的工具面向**设计语义**，不是原始图数据操作。底�
 用户："我们考虑一下空间维度"
   → ChatAgent：用户想讨论空间维度，我没有相关认知
     → ChatAgent 调用 design_ask_graph("用户提到空间维度，请分析相关设计认知")
-      → 系统层：构建临时工作集（从活跃工作集 + @引用开始）
+      → 系统层：构建临时工作集（从活跃工作集快照复制）
         → task({ subagent_type: "design-graph", mode: "cognition" })
-          → design-graph subagent 读取图，动态扩展临时工作集
+          → design-graph subagent 读取图，通过工具查询/扩展临时工作集
             → 发现 方向 → 意义 → 小数值 的关联
               → 返回 cognition 输出
                 → ChatAgent 解释给用户
@@ -625,7 +638,7 @@ interface DesignSummarizeDesignParameters {}
 2. 系统层从活跃工作集快照复制初始临时工作集，并注入系统辅助分析。
 3. GraphAgent 以 `judge` 模式分析意图，通过工具查询/扩展临时工作集，生成 Change Plan。
 4. GraphAgent 在子会话中调用 `question.ask`，问题事件冒泡到父会话 composer。
-5. 用户在父会话 composer 中看到审批面板，展示 `proposal.intent`、`proposal.rationale` 和 Change Plan 摘要。
+5. 用户在父会话 composer 中看到审批面板，展示 Change Plan 的 `intent`、`rationale` 和 `summary`，以及受影响的概念/关系摘要。
 6. 用户选择：
    - **Apply**：GraphAgent 在子会话内部转入 `execute` 模式，展开 Change Plan 细节并写入图数据库；成功后 bump 版本，返回 `change-applied` 并携带 `appliedChange` 摘要。
    - **Reject**：GraphAgent 终止子 Agent，返回 `rejected` 及理由；ChatAgent 据此引导用户重新讨论，直到可以发起下一次审批。
@@ -644,7 +657,7 @@ interface DesignSummarizeDesignParameters {}
 {
   questions: [{
     header: "Apply design change",
-    question: proposal.intent + "\n\n" + proposal.rationale,
+    question: changePlan.intent + "\n\n" + changePlan.rationale + "\n\n" + changePlan.summary,
     options: [
       { label: "Apply", description: "Apply this design change" },
       { label: "Reject", description: "Reject this design change" },
@@ -757,13 +770,13 @@ const designChatPermissions = Permission.fromConfig({
 
 ### 1. 构建临时工作集
 
-每次向 GraphAgent 发起请求前，系统层根据以下信息构建初始临时工作集：
+每次向 GraphAgent 发起请求前，系统层根据当前活跃工作集的快照初始化临时工作集。
 
-- 当前活跃工作集（Cache 快照）
-- 用户输入中的 @ 引用
-- ChatAgent 请求中的关键词
+临时工作集的初始值 = 活跃工作集快照（节点 ID + 上下文 ID）。
 
-临时工作集交给 GraphAgent 作为初始 Cache。GraphAgent 可以在分析中动态扩展。
+系统层还会并行运行自动化检查（冲突关系、重复节点、孤立节点、无效原型使用），结果填充到 `systemAnalysis` 区域，供 GraphAgent 读取。
+
+GraphAgent 在子会话中通过临时工作集工具查询、扩展、收缩该集合。
 
 ### 2. 注入系统辅助分析
 
@@ -857,7 +870,7 @@ Visual Editor 仍然直接写 DB（raw save），因为 GUI 操作本身已是�
 
 1. 重写 `src/design/agent/prompt/graph.txt`：
    - 明确 subagent 是 ChatAgent 的设计认知外脑。
-   - 说明四种工作模式。
+   - 说明五种工作模式（cognition、judge、execute、summarize、review-save）。
    - 说明可用工具集。
    - 强制最终输出为 JSON。
 
