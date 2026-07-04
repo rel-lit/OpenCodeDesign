@@ -3,20 +3,8 @@ import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { PlanExitTool } from "./plan"
 import {
-  DesignActivateContextTool,
-  DesignActivateNodeTool,
-  DesignFindNodesByNameTool,
-  DesignGetContextTool,
-  DesignGetNodeTool,
-  DesignGetPrototypeTool,
-  DesignGetStateTool,
-  DesignListContextsTool,
-  DesignListEdgesTool,
-  DesignListNodesTool,
-  DesignListPrototypesTool,
-  DesignProposeChangeTool,
-  DesignResolveReferenceTool,
-  DesignShowWorkingSetTool,
+  ChatAgentDesignTools,
+  GraphAgentDesignTools,
 } from "./design"
 import { Design } from "@/design/design"
 import { Session } from "@/session/session"
@@ -123,20 +111,13 @@ export const layer = Layer.effect(
     const patchtool = yield* ApplyPatchTool
     const skilltool = yield* SkillTool
     const agent = yield* Agent.Service
-    const designResolveReference = yield* DesignResolveReferenceTool
-    const designProposeChange = yield* DesignProposeChangeTool
-    const designListContexts = yield* DesignListContextsTool
-    const designGetContext = yield* DesignGetContextTool
-    const designListNodes = yield* DesignListNodesTool
-    const designGetNode = yield* DesignGetNodeTool
-    const designFindNodesByName = yield* DesignFindNodesByNameTool
-    const designListEdges = yield* DesignListEdgesTool
-    const designListPrototypes = yield* DesignListPrototypesTool
-    const designGetPrototype = yield* DesignGetPrototypeTool
-    const designShowWorkingSet = yield* DesignShowWorkingSetTool
-    const designActivateContext = yield* DesignActivateContextTool
-    const designActivateNode = yield* DesignActivateNodeTool
-    const designGetState = yield* DesignGetStateTool
+    const chatAgentDesignInfos = yield* Effect.all(ChatAgentDesignTools)
+    const graphAgentDesignInfos = yield* Effect.all(Object.values(GraphAgentDesignTools))
+    const [designAskGraph, designRequestChange, designSummarizeDesign, designSearchProject, designSearchWeb] =
+      yield* Effect.all(chatAgentDesignInfos.map((info) => Tool.init(info)))
+    const graphAgentDesignTools = yield* Effect.all(
+      graphAgentDesignInfos.map((info) => Tool.init(info)),
+    )
 
     const state = yield* InstanceState.make<State>(
       Effect.fn("ToolRegistry.state")(function* (ctx) {
@@ -243,20 +224,6 @@ export const layer = Layer.effect(
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
           plan: Tool.init(plan),
-          design_resolve_reference: Tool.init(designResolveReference),
-          design_propose_change: Tool.init(designProposeChange),
-          design_list_contexts: Tool.init(designListContexts),
-          design_get_context: Tool.init(designGetContext),
-          design_list_nodes: Tool.init(designListNodes),
-          design_get_node: Tool.init(designGetNode),
-          design_find_nodes_by_name: Tool.init(designFindNodesByName),
-          design_list_edges: Tool.init(designListEdges),
-          design_list_prototypes: Tool.init(designListPrototypes),
-          design_get_prototype: Tool.init(designGetPrototype),
-          design_show_working_set: Tool.init(designShowWorkingSet),
-          design_activate_context: Tool.init(designActivateContext),
-          design_activate_node: Tool.init(designActivateNode),
-          design_get_state: Tool.init(designGetState),
         })
 
         return {
@@ -278,20 +245,12 @@ export const layer = Layer.effect(
             tool.patch,
             ...(flags.experimentalLspTool ? [tool.lsp] : []),
             ...(flags.experimentalPlanMode && flags.client === "cli" ? [tool.plan] : []),
-            tool.design_resolve_reference,
-            tool.design_propose_change,
-            tool.design_list_contexts,
-            tool.design_get_context,
-            tool.design_list_nodes,
-            tool.design_get_node,
-            tool.design_find_nodes_by_name,
-            tool.design_list_edges,
-            tool.design_list_prototypes,
-            tool.design_get_prototype,
-            tool.design_show_working_set,
-            tool.design_activate_context,
-            tool.design_activate_node,
-            tool.design_get_state,
+            designAskGraph,
+            designRequestChange,
+            designSummarizeDesign,
+            designSearchProject,
+            designSearchWeb,
+            ...graphAgentDesignTools,
           ],
           task: tool.task,
           read: tool.read,

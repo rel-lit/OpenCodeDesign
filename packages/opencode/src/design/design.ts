@@ -7,16 +7,16 @@ import { WorkingSet } from "./core/working-set"
 import { EventLog } from "./core/event-log"
 import { DesignTypes } from "./core/types"
 import { DesignStore } from "./store/store"
-import { GraphAgent } from "./agent/graph"
 import { DesignAgentLlm } from "./agent/llm"
 import * as GraphAgentTypes from "./agent/types"
 import { Preprocessor } from "./system/preprocessor"
 import { WorkingSetComputer } from "./system/working-set-computer"
 import { SystemAnalyzer } from "./system/analyzer"
 import { VersionSync } from "./system/version-sync"
-import { ApprovalPanel } from "./approval-panel"
-import { Provider } from "@/provider/provider"
+import { TemporaryWorkingSet } from "./system/temporary-working-set"
+import { ChangeAccumulator } from "./system/change-accumulator"
 import { PlanHandoff } from "./plan-handoff"
+import { Provider } from "@/provider/provider"
 
 export interface Interface {
   readonly createContext: GraphEngine.Interface["createContext"]
@@ -46,16 +46,6 @@ export interface Interface {
   readonly transaction: <A, E>(
     f: (txStore: DesignStore.Store) => Effect.Effect<A, E>,
   ) => Effect.Effect<A, E>
-  readonly proposeChanges: (
-    delta: GraphAgentTypes.GraphDelta,
-    panel?: ApprovalPanel.Interface,
-  ) => Effect.Effect<
-    GraphAgentTypes.Output,
-    | GraphEngine.GraphEngineError
-    | GraphAgent.NoDeltaError
-    | DesignAgentLlm.GenerateObjectError
-    | Provider.DefaultModelError
-  >
   readonly preprocessInput: (input: string) => Effect.Effect<
     {
       processedText: string
@@ -68,13 +58,34 @@ export interface Interface {
     diffAnalysis: PlanHandoff.PlanHandoffPayload["diffAnalysis"]
     designGraphSummary: string
   }) => Effect.Effect<PlanHandoff.PlanHandoffPayload>
-  readonly applyRawDelta: (delta: GraphAgentTypes.GraphDelta) => Effect.Effect<
-    void,
-    GraphEngine.GraphEngineError
-  >
+  readonly applyRawDelta: (
+    delta: GraphAgentTypes.GraphDelta,
+    source?: DesignTypes.VersionBumpSource,
+  ) => Effect.Effect<void, GraphEngine.GraphEngineError>
   readonly getCurrentVersion: VersionSync.Interface["getCurrentVersion"]
   readonly bumpVersion: VersionSync.Interface["bumpVersion"]
   readonly refreshChatAgentContext: VersionSync.Interface["refreshChatAgentContext"]
+  readonly isVisualEditorDirty: VersionSync.Interface["isVisualEditorDirty"]
+  readonly checkChatAgentSync: VersionSync.Interface["checkChatAgentSync"]
+  readonly getTemporaryWorkingSet: TemporaryWorkingSet.Interface["get"]
+  readonly updateTemporaryWorkingSet: TemporaryWorkingSet.Interface["update"]
+  readonly expandTemporaryWorkingSet: TemporaryWorkingSet.Interface["expand"]
+  readonly resetTemporaryWorkingSet: TemporaryWorkingSet.Interface["reset"]
+  readonly destroyTemporaryWorkingSet: TemporaryWorkingSet.Interface["destroy"]
+  readonly getChangeAccumulator: ChangeAccumulator.Interface["getPendingDelta"]
+  readonly addAccumulatedNode: ChangeAccumulator.Interface["addNode"]
+  readonly updateAccumulatedNode: ChangeAccumulator.Interface["updateNode"]
+  readonly deleteAccumulatedNode: ChangeAccumulator.Interface["deleteNode"]
+  readonly addAccumulatedEdge: ChangeAccumulator.Interface["addEdge"]
+  readonly updateAccumulatedEdge: ChangeAccumulator.Interface["updateEdge"]
+  readonly deleteAccumulatedEdge: ChangeAccumulator.Interface["deleteEdge"]
+  readonly applyAccumulatedChanges: (sessionID: string) => Effect.Effect<void, GraphEngine.GraphEngineError>
+  readonly clearAccumulatedChanges: ChangeAccumulator.Interface["clear"]
+  readonly getAccumulatedGraphState: ChangeAccumulator.Interface["getMergedState"]
+  readonly findContextByNameOrId: (nameOrId: string) => Effect.Effect<DesignTypes.BoundedContext | undefined>
+  readonly findNodeByNameOrId: (nameOrId: string) => Effect.Effect<DesignTypes.Node | undefined>
+  readonly listEdgesForNode: GraphEngine.Interface["listEdgesForNode"]
+  readonly summarizeGraphState: (state: DesignTypes.GraphState) => Effect.Effect<string>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Design") {}
@@ -84,11 +95,13 @@ type DesignState = {
   readonly workingSet: WorkingSet.Interface
   readonly eventLog: EventLog.Interface
   readonly versionSync: VersionSync.Interface
+  readonly temporaryWorkingSet: TemporaryWorkingSet.Interface
+  readonly changeAccumulator: ChangeAccumulator.Interface
   readonly store: DesignStore.Store
 }
 
 export type LayerOptions = {
-  readonly makeApprovalPanel?: () => ApprovalPanel.Interface
+  readonly placeholder?: never
 }
 
 export const layer = (options?: LayerOptions) =>
@@ -96,8 +109,6 @@ export const layer = (options?: LayerOptions) =>
     Service,
     Effect.gen(function* () {
       const designStore = yield* DesignStore.Service
-      const graphAgent = yield* GraphAgent.Service
-      const makeApprovalPanel = options?.makeApprovalPanel
 
     const designState = yield* InstanceState.make<DesignState, never, Scope.Scope>(
       Effect.fn("Design.state")(function* () {
@@ -109,6 +120,8 @@ export const layer = (options?: LayerOptions) =>
         const workingSet = yield* WorkingSet.makeWorkingSet(20)(graph)
         const eventLog = yield* EventLog.makeEventLog()
         const versionSync = VersionSync.make(eventLog)
+        const temporaryWorkingSet = TemporaryWorkingSet.make(graph, workingSet)
+        const changeAccumulator = ChangeAccumulator.make(graph)
 
         if (loaded.nodes.length > 0 || loaded.contexts.length > 0) {
           for (const ctx of loaded.contexts) {
@@ -153,7 +166,7 @@ export const layer = (options?: LayerOptions) =>
           }
         }
 
-        return { graph, workingSet, eventLog, versionSync, store }
+        return { graph, workingSet, eventLog, versionSync, store, temporaryWorkingSet, changeAccumulator }
       }),
     )
 
@@ -356,9 +369,6 @@ export const layer = (options?: LayerOptions) =>
       yield* Effect.logInfo("design state initialized")
     })
 
-    const shouldEnrich = (input: string, tws: GraphAgentTypes.TemporaryWorkingSet): boolean =>
-      input.includes("@") && tws.nodeIds.length > 0
-
     const preprocessInput = Effect.fn("Design.preprocessInput")((input: string) =>
       use((state) =>
         Effect.gen(function* () {
@@ -372,23 +382,11 @@ export const layer = (options?: LayerOptions) =>
           const expanded = Preprocessor.expandAtReferences(input, graphState)
           const temporaryWorkingSet = WorkingSetComputer.fromInput(input, activeWorkingSet, graphState)
           const analyzed = SystemAnalyzer.analyze(temporaryWorkingSet, graphState)
-          const enriched = yield* shouldEnrich(input, analyzed)
-            ? graphAgent.analyze({
-                source: "chat",
-                userInput: input,
-                temporaryWorkingSet: analyzed,
-                activeWorkingSet,
-                graphState,
-              })
-            : Effect.succeed(undefined)
-          const processedText = Preprocessor.buildProcessedText(expanded, analyzed, enriched)
-          const result: {
-            processedText: string
-            temporaryWorkingSet: GraphAgentTypes.TemporaryWorkingSet
-            enriched?: GraphAgentTypes.Output
-          } = { processedText, temporaryWorkingSet: analyzed }
-          if (enriched !== undefined) result.enriched = enriched
-          return result
+          const processedText = Preprocessor.buildProcessedText(expanded, analyzed, undefined)
+          return {
+            processedText,
+            temporaryWorkingSet: analyzed,
+          }
         }),
       ),
     )
@@ -428,7 +426,8 @@ export const layer = (options?: LayerOptions) =>
 
     const isUuid = (value: string): boolean => UUID_REGEX.test(value)
 
-    const applyRawDelta = Effect.fn("Design.applyRawDelta")((delta: GraphAgentTypes.GraphDelta) =>
+    const applyRawDelta = Effect.fn("Design.applyRawDelta")(
+      (delta: GraphAgentTypes.GraphDelta, source: DesignTypes.VersionBumpSource = "chat-agent") =>
       use((state) =>
         state.store.transaction((txStore) =>
           Effect.gen(function* () {
@@ -562,59 +561,43 @@ export const layer = (options?: LayerOptions) =>
             for (const event of events) {
               yield* txStore.appendEvent(event)
             }
+            yield* state.versionSync.bumpVersion(source)
           }),
         ),
       ),
     )
 
-    let self!: Interface
-
-    const proposeChanges = Effect.fn("Design.proposeChanges")(
-      (delta: GraphAgentTypes.GraphDelta, panel?: ApprovalPanel.Interface) =>
+    const findContextByNameOrId = Effect.fn("Design.findContextByNameOrId")((nameOrId: string) =>
+      use((state) =>
         Effect.gen(function* () {
-          const state = yield* getState()
-          const activeWs = yield* use((s) => s.workingSet.list())
-          const input: GraphAgentTypes.Input = {
-            source: "chat",
-            userInput: "",
-            temporaryWorkingSet: {
-              contextIds: state.contexts.map((ctx) => ctx.id),
-              nodeIds: state.nodes.map((node) => node.id),
-              edgeKeys: state.edges.map((edge) => DesignTypes.edgeKey(edge.leftNodeId, edge.rightNodeId)),
-              systemAnalysis: {
-                conflictingRelations: [],
-                duplicateNodeCandidates: [],
-                orphanNodes: [],
-                invalidPrototypeUsage: [],
-              },
-              expandedByGraphAgent: {
-                contextIds: [],
-                nodeIds: [],
-                edgeKeys: [],
-                reason: "",
-              },
-            },
-            activeWorkingSet: {
-              contextIds: activeWs.contextIds,
-              nodeIds: activeWs.nodeIds,
-              capacity: 20,
-            },
-            graphState: state,
-            proposedChange: delta,
-          }
-          const proposal = yield* graphAgent.analyze(input)
-          if (proposal.type !== "change-proposal") return proposal
-          const approvalPanel = panel ?? makeApprovalPanel?.()
-          if (approvalPanel) {
-            approvalPanel.propose(proposal)
-            const approved = yield* approvalPanel.awaitConfirmation()
-            return yield* graphAgent.execute(approved).pipe(Effect.provideService(Service, self as Interface))
-          }
-          return yield* graphAgent.execute(proposal).pipe(Effect.provideService(Service, self as Interface))
+          const contexts = yield* state.graph.listContexts()
+          const byId = contexts.find((c) => c.id === nameOrId)
+          if (byId) return byId
+          return contexts.find((c) => c.name === nameOrId)
         }),
+      ),
     )
 
-    self = Service.of({
+    const findNodeByNameOrId = Effect.fn("Design.findNodeByNameOrId")((nameOrId: string) =>
+      use((state) =>
+        Effect.gen(function* () {
+          const nodes = yield* state.graph.listNodes()
+          const byId = nodes.find((n) => n.id === nameOrId)
+          if (byId) return byId
+          return nodes.find((n) => n.name === nameOrId || n.aliases.includes(nameOrId))
+        }),
+      ),
+    )
+
+    const listEdgesForNode = (nodeId: string) => use((state) => state.graph.listEdgesForNode(nodeId))
+
+    const summarizeGraphState = Effect.fn("Design.summarizeGraphState")((state: DesignTypes.GraphState) =>
+      Effect.succeed(
+        `Design has ${state.contexts.length} contexts, ${state.nodes.length} nodes, ${state.edges.length} edges, ${state.prototypes.length} prototypes.`,
+      ),
+    )
+
+    return Service.of({
       createContext,
       listContexts,
       getContext,
@@ -636,34 +619,71 @@ export const layer = (options?: LayerOptions) =>
       activateNode,
       listNodes: () => use((state) => state.graph.listNodes()),
       listEdges: () => use((state) => state.graph.listEdges()),
+      listEdgesForNode,
       listWorkingSet: () => use((state) => state.workingSet.list()),
       getState,
       init,
       transaction,
-      proposeChanges,
       preprocessInput,
       handoffToPlan,
       applyRawDelta,
       getCurrentVersion,
       bumpVersion,
       refreshChatAgentContext,
+      isVisualEditorDirty: () => use((state) => state.versionSync.isVisualEditorDirty()),
+      checkChatAgentSync: () => use((state) => state.versionSync.checkChatAgentSync()),
+      getTemporaryWorkingSet: (sessionID: string) => use((state) => state.temporaryWorkingSet.get(sessionID)),
+      updateTemporaryWorkingSet: (sessionID: string, input: TemporaryWorkingSet.Update) =>
+        use((state) => state.temporaryWorkingSet.update(sessionID, input)),
+      expandTemporaryWorkingSet: (sessionID: string, nodeId: string) =>
+        use((state) => state.temporaryWorkingSet.expand(sessionID, nodeId)),
+      resetTemporaryWorkingSet: (sessionID: string) => use((state) => state.temporaryWorkingSet.reset(sessionID)),
+      destroyTemporaryWorkingSet: (sessionID: string) => use((state) => state.temporaryWorkingSet.destroy(sessionID)),
+      getChangeAccumulator: (sessionID: string) => use((state) => state.changeAccumulator.getPendingDelta(sessionID)),
+      addAccumulatedNode: (sessionID: string, input: GraphAgentTypes.NodeInput) =>
+        use((state) => state.changeAccumulator.addNode(sessionID, input)),
+      updateAccumulatedNode: (sessionID: string, id: string, patch: Partial<GraphAgentTypes.NodeInput>) =>
+        use((state) => state.changeAccumulator.updateNode(sessionID, id, patch)),
+      deleteAccumulatedNode: (sessionID: string, id: string) =>
+        use((state) => state.changeAccumulator.deleteNode(sessionID, id)),
+      addAccumulatedEdge: (sessionID: string, input: GraphAgentTypes.EdgeInput) =>
+        use((state) => state.changeAccumulator.addEdge(sessionID, input)),
+      updateAccumulatedEdge: (
+        sessionID: string,
+        leftNodeId: string,
+        rightNodeId: string,
+        patch: Partial<GraphAgentTypes.EdgeInput>,
+      ) => use((state) => state.changeAccumulator.updateEdge(sessionID, leftNodeId, rightNodeId, patch)),
+      deleteAccumulatedEdge: (sessionID: string, leftNodeId: string, rightNodeId: string) =>
+        use((state) => state.changeAccumulator.deleteEdge(sessionID, leftNodeId, rightNodeId)),
+      applyAccumulatedChanges: (sessionID: string) =>
+        use((state) =>
+          Effect.gen(function* () {
+            const delta = yield* state.changeAccumulator.apply(sessionID)
+            yield* applyRawDelta(delta)
+          }),
+        ),
+      clearAccumulatedChanges: (sessionID: string) => use((state) => state.changeAccumulator.clear(sessionID)),
+      getAccumulatedGraphState: (sessionID: string) => use((state) => state.changeAccumulator.getMergedState(sessionID)),
+      findContextByNameOrId,
+      findNodeByNameOrId,
+      summarizeGraphState,
     })
-
-    return self
   }),
 )
 
 export const defaultLayer = Layer.suspend(() =>
   layer().pipe(
     Layer.provide(DesignStore.defaultLayer),
-    Layer.provide(GraphAgent.defaultLayer),
+    Layer.provide(TemporaryWorkingSet.defaultLayer),
+    Layer.provide(ChangeAccumulator.defaultLayer),
   ),
 )
 
 export const node = LayerNode.make({
   service: Service,
   layer: defaultLayer,
-  deps: [DesignStore.node],
+  deps: [DesignStore.node, TemporaryWorkingSet.node, ChangeAccumulator.node],
 })
 
 export * as Design from "./design"

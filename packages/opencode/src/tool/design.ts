@@ -1,95 +1,360 @@
 import { Effect, Schema } from "effect"
 import * as Tool from "./tool"
 import { Design } from "@/design/design"
-import * as GraphAgentTypes from "@/design/agent/types"
+import { VersionSync } from "@/design/system/version-sync"
+import { TaskTool } from "./task"
+import { Agent } from "@/agent/agent"
+import { Truncate } from "./truncate"
 import { DesignTypes } from "@/design/core/types"
+import * as GraphAgentTypes from "@/design/agent/types"
 
-const ResolveReferenceParameters = Schema.Struct({
-  reference: Schema.String.annotate({ description: "The concept name or alias to resolve" }),
-  contextId: Schema.optional(Schema.String).annotate({
-    description: "Optional context ID to disambiguate the reference",
-  }),
+const designToolDescription = (description: string) =>
+  `${description} (Design graph semantic tool; only the design-graph subagent may use this.)`
+const chatToolDescription = (description: string) => `${description} (Design mode ChatAgent tool.)`
+
+const AskGraphParameters = Schema.Struct({
+  question: Schema.String.annotate({ description: "A design question for the design-graph subagent" }),
 })
 
-export const DesignResolveReferenceTool = Tool.define<
-  typeof ResolveReferenceParameters,
-  Record<string, unknown>,
-  Design.Service
->(
-  "design_resolve_reference",
+export const DesignAskGraphTool = Tool.define(
+  "design_ask_graph",
+  Effect.gen(function* () {
+    const task = yield* Tool.init(yield* TaskTool)
+    const design = yield* Design.Service
+    return {
+      description: chatToolDescription(
+        "Ask the design-graph subagent for design cognition about the current design graph.",
+      ),
+      parameters: AskGraphParameters,
+      execute: (args: Schema.Schema.Type<typeof AskGraphParameters>, ctx: Tool.Context) =>
+        Effect.gen(function* () {
+          const sync = yield* design.checkChatAgentSync().pipe(
+            Effect.catchTag("DesignStaleContextError" as const, (error) => Effect.succeed(error)),
+          )
+          if (sync instanceof VersionSync.StaleContextError) {
+            return {
+              title: "Design sync required",
+              output: sync.message,
+              metadata: { syncRequired: true } as Record<string, unknown>,
+            }
+          }
+          const result = yield* task.execute(
+            {
+              description: "Design cognition",
+              subagent_type: "design-graph",
+              prompt: buildGraphAgentPrompt({ mode: "cognition", request: args.question, ctx }),
+            },
+            ctx,
+          )
+          return {
+            title: "Design cognition",
+            output: result.output,
+            metadata: { result } as Record<string, unknown>,
+          }
+        }),
+    }
+  }),
+)
+
+const RequestChangeParameters = Schema.Struct({
+  intent: Schema.String.annotate({ description: "Natural-language design change intent" }),
+})
+
+export const DesignRequestChangeTool = Tool.define(
+  "design_request_change",
+  Effect.gen(function* () {
+    const task = yield* Tool.init(yield* TaskTool)
+    const design = yield* Design.Service
+    return {
+      description: chatToolDescription(
+        "Request a design change. The design-graph subagent will analyze the graph, build a Change Plan, ask the user for approval, and execute the change if approved.",
+      ),
+      parameters: RequestChangeParameters,
+      execute: (args: Schema.Schema.Type<typeof RequestChangeParameters>, ctx: Tool.Context) =>
+        Effect.gen(function* () {
+          const sync = yield* design.checkChatAgentSync().pipe(
+            Effect.catchTag("DesignStaleContextError" as const, (error) => Effect.succeed(error)),
+          )
+          if (sync instanceof VersionSync.StaleContextError) {
+            return {
+              title: "Design sync required",
+              output: sync.message,
+              metadata: { syncRequired: true } as Record<string, unknown>,
+            }
+          }
+          const result = yield* task.execute(
+            {
+              description: "Design change request",
+              subagent_type: "design-graph",
+              prompt: buildGraphAgentPrompt({ mode: "judge", request: args.intent, ctx }),
+            },
+            ctx,
+          )
+          return {
+            title: "Design change request",
+            output: result.output,
+            metadata: { result } as Record<string, unknown>,
+          }
+        }),
+    }
+  }),
+)
+
+const SummarizeDesignParameters = Schema.Struct({})
+
+export const DesignSummarizeDesignTool = Tool.define(
+  "design_summarize_design",
+  Effect.gen(function* () {
+    const task = yield* Tool.init(yield* TaskTool)
+    const design = yield* Design.Service
+    return {
+      description: chatToolDescription(
+        "Ask the design-graph subagent for a natural-language summary of the current design.",
+      ),
+      parameters: SummarizeDesignParameters,
+      execute: (args: Schema.Schema.Type<typeof SummarizeDesignParameters>, ctx: Tool.Context) =>
+        Effect.gen(function* () {
+          const sync = yield* design.checkChatAgentSync().pipe(
+            Effect.catchTag("DesignStaleContextError" as const, (error) => Effect.succeed(error)),
+          )
+          if (sync instanceof VersionSync.StaleContextError) {
+            return {
+              title: "Design sync required",
+              output: sync.message,
+              metadata: { syncRequired: true } as Record<string, unknown>,
+            }
+          }
+          const result = yield* task.execute(
+            {
+              description: "Design summary",
+              subagent_type: "design-graph",
+              prompt: buildGraphAgentPrompt({ mode: "summarize", request: "Summarize the current design.", ctx }),
+            },
+            ctx,
+          )
+          return {
+            title: "Design summary",
+            output: result.output,
+            metadata: { result } as Record<string, unknown>,
+          }
+        }),
+    }
+  }),
+)
+
+const SearchProjectParameters = Schema.Struct({
+  intent: Schema.String.annotate({ description: "What to search for in the project and how it relates to the design" }),
+})
+
+export const DesignSearchProjectTool = Tool.define(
+  "design_search_project",
+  Effect.gen(function* () {
+    const task = yield* Tool.init(yield* TaskTool)
+    return {
+      description: chatToolDescription(
+        "Ask the design-search subagent to read the project and compare it with the current design.",
+      ),
+      parameters: SearchProjectParameters,
+      execute: (args: Schema.Schema.Type<typeof SearchProjectParameters>, ctx: Tool.Context) =>
+        Effect.gen(function* () {
+          const result = yield* task.execute(
+            {
+              description: "Design project search",
+              subagent_type: "design-search",
+              prompt: args.intent,
+            },
+            ctx,
+          )
+          return {
+            title: "Design project search",
+            output: result.output,
+            metadata: { result } as Record<string, unknown>,
+          }
+        }),
+    }
+  }),
+)
+
+const SearchWebParameters = Schema.Struct({
+  query: Schema.String.annotate({ description: "Web search query" }),
+})
+
+export const DesignSearchWebTool = Tool.define(
+  "design_search_web",
+  Effect.gen(function* () {
+    const task = yield* Tool.init(yield* TaskTool)
+    return {
+      description: chatToolDescription(
+        "Ask the design-search subagent to search the web for relevant design references.",
+      ),
+      parameters: SearchWebParameters,
+      execute: (args: Schema.Schema.Type<typeof SearchWebParameters>, ctx: Tool.Context) =>
+        Effect.gen(function* () {
+          const result = yield* task.execute(
+            {
+              description: "Design web search",
+              subagent_type: "design-search",
+              prompt: `Search the web for: ${args.query}`,
+            },
+            ctx,
+          )
+          return {
+            title: "Design web search",
+            output: result.output,
+            metadata: { result } as Record<string, unknown>,
+          }
+        }),
+    }
+  }),
+)
+
+function buildGraphAgentPrompt(input: {
+  mode: "cognition" | "judge" | "summarize" | "review-save"
+  request: string
+  ctx: Tool.Context
+}): string {
+  return JSON.stringify({
+    mode: input.mode,
+    request: input.request,
+    sessionID: input.ctx.sessionID,
+  })
+}
+
+const WorksetGetParameters = Schema.Struct({})
+
+export const DesignWorksetGetTool = Tool.define(
+  "design_workset_get",
   Effect.gen(function* () {
     const design = yield* Design.Service
     return {
-      description:
-        "Resolve a concept reference by name or alias. If it does not exist, create it automatically in the active or default context. Use this as the default way to mention concepts.",
-      parameters: ResolveReferenceParameters,
+      description: designToolDescription("Get the current temporary working set for this subagent session."),
+      parameters: WorksetGetParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const result = yield* design.resolveReference(args)
+          const ws = yield* design.getTemporaryWorkingSet(ctx.sessionID)
           return {
-            title: `Resolved ${args.reference}`,
-            output: `${result.action === "created" ? "Created" : "Matched"} node ${result.fullName} (${result.nodeId})`,
-            metadata: { action: result.action, nodeId: result.nodeId, fullName: result.fullName },
+            title: "Temporary working set",
+            output: `Contexts: ${ws.contextIds.join(", ") || "none"}\nNodes: ${ws.nodeIds.join(", ") || "none"}`,
+            metadata: { contextIds: ws.contextIds, nodeIds: ws.nodeIds, capacity: ws.capacity },
           }
         }).pipe(Effect.orDie),
     }
   }),
 )
 
-const CreateContextParameters = Schema.Struct({
-  name: Schema.String.annotate({ description: "The context name" }),
-  semantics: Schema.optional(Schema.String).annotate({ description: "Description of the context's semantics" }),
+const WorksetAddParameters = Schema.Struct({
+  nodeIds: Schema.optional(Schema.Array(Schema.String)).annotate({ description: "Node IDs to add" }),
+  contextIds: Schema.optional(Schema.Array(Schema.String)).annotate({ description: "Context IDs to add" }),
 })
 
-export const DesignCreateContextTool = Tool.define<
-  typeof CreateContextParameters,
+export const DesignWorksetAddTool = Tool.define<
+  typeof WorksetAddParameters,
   Record<string, unknown>,
   Design.Service
 >(
-  "design_create_context",
+  "design_workset_add",
   Effect.gen(function* () {
     const design = yield* Design.Service
     return {
-      description:
-        "Create a new bounded context for grouping semantically related nodes. Every node must belong to exactly one context.",
-      parameters: CreateContextParameters,
+      description: designToolDescription("Add nodes and/or contexts to the temporary working set."),
+      parameters: WorksetAddParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const context = yield* design.createContext({
-            name: args.name,
-            semantics: args.semantics,
+          yield* design.updateTemporaryWorkingSet(ctx.sessionID, {
+            addNodeIds: args.nodeIds ?? [],
+            addContextIds: args.contextIds ?? [],
           })
           return {
-            title: `Created context ${context.name}`,
-            output: `Context ${context.name} (${context.id})`,
-            metadata: { contextId: context.id },
+            title: "Added to working set",
+            output: `Added nodes: ${(args.nodeIds ?? []).join(", ") || "none"}; contexts: ${(args.contextIds ?? []).join(", ") || "none"}`,
+            metadata: {},
           }
         }).pipe(Effect.orDie),
     }
   }),
 )
 
-const ListContextsParameters = Schema.Struct({})
+const WorksetRemoveParameters = Schema.Struct({
+  nodeIds: Schema.optional(Schema.Array(Schema.String)).annotate({ description: "Node IDs to remove" }),
+  contextIds: Schema.optional(Schema.Array(Schema.String)).annotate({ description: "Context IDs to remove" }),
+})
 
-export const DesignListContextsTool = Tool.define<
-  typeof ListContextsParameters,
+export const DesignWorksetRemoveTool = Tool.define<
+  typeof WorksetRemoveParameters,
   Record<string, unknown>,
   Design.Service
 >(
-  "design_list_contexts",
+  "design_workset_remove",
   Effect.gen(function* () {
     const design = yield* Design.Service
     return {
-      description: "List all bounded contexts in the design graph.",
-      parameters: ListContextsParameters,
+      description: designToolDescription("Remove nodes and/or contexts from the temporary working set."),
+      parameters: WorksetRemoveParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const contexts = yield* design.listContexts()
-          const lines = contexts.map((c) => `- ${c.name} (${c.id})${c.semantics ? `: ${c.semantics}` : ""}`)
+          yield* design.updateTemporaryWorkingSet(ctx.sessionID, {
+            removeNodeIds: args.nodeIds ?? [],
+            removeContextIds: args.contextIds ?? [],
+          })
           return {
-            title: "Contexts",
-            output: lines.join("\n") || "No contexts yet.",
-            metadata: { count: contexts.length },
+            title: "Removed from working set",
+            output: `Removed nodes: ${(args.nodeIds ?? []).join(", ") || "none"}; contexts: ${(args.contextIds ?? []).join(", ") || "none"}`,
+            metadata: {},
+          }
+        }).pipe(Effect.orDie),
+    }
+  }),
+)
+
+const WorksetExpandParameters = Schema.Struct({
+  nodeId: Schema.String.annotate({ description: "Node ID whose neighbors should be added" }),
+})
+
+export const DesignWorksetExpandTool = Tool.define<
+  typeof WorksetExpandParameters,
+  Record<string, unknown>,
+  Design.Service
+>(
+  "design_workset_expand",
+  Effect.gen(function* () {
+    const design = yield* Design.Service
+    return {
+      description: designToolDescription("Expand the temporary working set with a node's neighbors."),
+      parameters: WorksetExpandParameters,
+      execute: (args, ctx) =>
+        Effect.gen(function* () {
+          yield* design.expandTemporaryWorkingSet(ctx.sessionID, args.nodeId)
+          return {
+            title: "Expanded working set",
+            output: `Expanded around node ${args.nodeId}`,
+            metadata: {},
+          }
+        }).pipe(Effect.orDie),
+    }
+  }),
+)
+
+const GetDesignParameters = Schema.Struct({})
+
+export const DesignGetDesignTool = Tool.define<
+  typeof GetDesignParameters,
+  Record<string, unknown>,
+  Design.Service
+>(
+  "design_get_design",
+  Effect.gen(function* () {
+    const design = yield* Design.Service
+    return {
+      description: designToolDescription("Get a semantic overview of the current design graph."),
+      parameters: GetDesignParameters,
+      execute: (args, ctx) =>
+        Effect.gen(function* () {
+          const state = yield* design.getAccumulatedGraphState(ctx.sessionID)
+          const summary = yield* design.summarizeGraphState(state)
+          return {
+            title: "Design overview",
+            output: summary,
+            metadata: { state },
           }
         }).pipe(Effect.orDie),
     }
@@ -97,268 +362,117 @@ export const DesignListContextsTool = Tool.define<
 )
 
 const GetContextParameters = Schema.Struct({
-  id: Schema.String.annotate({ description: "ID of the bounded context" }),
+  name_or_id: Schema.String.annotate({ description: "Context name or ID" }),
 })
 
-export const DesignGetContextTool = Tool.define<typeof GetContextParameters, Record<string, unknown>, Design.Service>(
+export const DesignGetContextTool = Tool.define<
+  typeof GetContextParameters,
+  Record<string, unknown>,
+  Design.Service
+>(
   "design_get_context",
   Effect.gen(function* () {
     const design = yield* Design.Service
     return {
-      description: "Get a bounded context by ID.",
+      description: designToolDescription("Get a bounded context and its concepts."),
       parameters: GetContextParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const context = yield* design.getContext(args.id)
+          const state = yield* design.getAccumulatedGraphState(ctx.sessionID)
+          const context = state.contexts.find((c) => c.id === args.name_or_id || c.name === args.name_or_id)
           if (!context) {
-            return { title: "Context not found", output: `No context with ID ${args.id}`, metadata: {} }
+            return { title: "Context not found", output: `No context matching "${args.name_or_id}"`, metadata: {} }
           }
+          const contextNodes = state.nodes.filter((n) => n.contextId === context.id)
+          const lines = [
+            `Context: ${context.name} (${context.id})`,
+            `Semantics: ${context.semantics || "none"}`,
+            "Concepts:",
+            ...contextNodes.map((n) => `- ${n.name} (${n.id})`),
+          ]
           return {
             title: `Context ${context.name}`,
-            output: `ID: ${context.id}\nName: ${context.name}\nSemantics: ${context.semantics}`,
-            metadata: { context },
+            output: lines.join("\n"),
+            metadata: { context, nodes: contextNodes },
           }
         }).pipe(Effect.orDie),
     }
   }),
 )
 
-const UpdateContextParameters = Schema.Struct({
-  id: Schema.String.annotate({ description: "ID of the bounded context" }),
-  name: Schema.optional(Schema.String).annotate({ description: "New context name" }),
-  semantics: Schema.optional(Schema.String).annotate({ description: "New semantics description" }),
+const GetConceptParameters = Schema.Struct({
+  name_or_id: Schema.String.annotate({ description: "Concept name or ID" }),
 })
 
-export const DesignUpdateContextTool = Tool.define<
-  typeof UpdateContextParameters,
+export const DesignGetConceptTool = Tool.define<
+  typeof GetConceptParameters,
   Record<string, unknown>,
   Design.Service
 >(
-  "design_update_context",
+  "design_get_concept",
   Effect.gen(function* () {
     const design = yield* Design.Service
     return {
-      description: "Update the name or semantics of a bounded context.",
-      parameters: UpdateContextParameters,
+      description: designToolDescription("Get a concept's semantics, relations, and neighboring concepts."),
+      parameters: GetConceptParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const context = yield* design.updateContext(args.id, {
-            name: args.name,
-            semantics: args.semantics,
-          })
-          return {
-            title: `Updated context ${context.name}`,
-            output: `Context ${context.name} (${context.id})`,
-            metadata: { contextId: context.id },
-          }
-        }).pipe(Effect.orDie),
-    }
-  }),
-)
-
-const CreateNodeParameters = Schema.Struct({
-  name: Schema.String.annotate({ description: "The node's referential name" }),
-  contextId: Schema.String.annotate({ description: "ID of the bounded context" }),
-  defaultSemantics: Schema.optional(Schema.String).annotate({ description: "Default semantic description" }),
-  aliases: Schema.optional(Schema.Array(Schema.String)).annotate({ description: "Alternative names" }),
-})
-
-export const DesignCreateNodeTool = Tool.define<
-  typeof CreateNodeParameters,
-  Record<string, unknown>,
-  Design.Service
->(
-  "design_create_node",
-  Effect.gen(function* () {
-    const design = yield* Design.Service
-    return {
-      description:
-        "Create a new node explicitly in a specific context. Prefer design_resolve_reference unless you need exact control over context or aliases.",
-      parameters: CreateNodeParameters,
-      execute: (args, ctx) =>
-        Effect.gen(function* () {
-          const nodeId = crypto.randomUUID()
-          const delta: GraphAgentTypes.GraphDelta = {
-            addNodes: [{
-              id: nodeId,
-              name: args.name,
-              contextId: args.contextId,
-              kind: "node",
-              aliases: args.aliases ? [...args.aliases] : [],
-              defaultSemantics: args.defaultSemantics ?? "",
-              connectedEdges: [],
-              createdAt: 0,
-              updatedAt: 0,
-              retired: false,
-            }],
-          }
-          const result = yield* design.proposeChanges(delta)
-          const created = result.delta?.addNodes?.[0]
-          return {
-            title: `Created node ${created?.name ?? args.name}`,
-            output: `Node ${created?.name ?? args.name} (${created?.id ?? nodeId}) in context ${args.contextId}`,
-            metadata: { nodeId: created?.id ?? nodeId },
-          }
-        }).pipe(Effect.orDie),
-    }
-  }),
-)
-
-const GetNodeParameters = Schema.Struct({
-  id: Schema.String.annotate({ description: "ID of the node" }),
-})
-
-export const DesignGetNodeTool = Tool.define<typeof GetNodeParameters, Record<string, unknown>, Design.Service>(
-  "design_get_node",
-  Effect.gen(function* () {
-    const design = yield* Design.Service
-    return {
-      description: "Get a node by ID.",
-      parameters: GetNodeParameters,
-      execute: (args, ctx) =>
-        Effect.gen(function* () {
-          const node = yield* design.getNode(args.id)
+          const state = yield* design.getAccumulatedGraphState(ctx.sessionID)
+          const node = state.nodes.find(
+            (n) => n.id === args.name_or_id || n.name === args.name_or_id || n.aliases.includes(args.name_or_id),
+          )
           if (!node) {
-            return { title: "Node not found", output: `No node with ID ${args.id}`, metadata: {} }
+            return { title: "Concept not found", output: `No concept matching "${args.name_or_id}"`, metadata: {} }
           }
+          const edges = state.edges.filter((e) => e.leftNodeId === node.id || e.rightNodeId === node.id)
+          const related = edges.map((e) => {
+            const otherId = e.leftNodeId === node.id ? e.rightNodeId : e.leftNodeId
+            const other = state.nodes.find((n) => n.id === otherId)
+            return `${other?.name ?? otherId} via ${e.prototypeId}`
+          })
+          const lines = [
+            `Concept: ${node.name} (${node.id})`,
+            `Kind: ${node.kind}`,
+            `Aliases: ${node.aliases.join(", ") || "none"}`,
+            `Semantics: ${node.defaultSemantics || "none"}`,
+            "Relations:",
+            ...related.map((r) => `- ${r}`),
+          ]
           return {
-            title: `Node ${node.name}`,
-            output: `ID: ${node.id}\nName: ${node.name}\nAliases: ${node.aliases.join(", ") || "none"}\nContext: ${node.contextId}\nSemantics: ${node.defaultSemantics}`,
-            metadata: { node },
+            title: `Concept ${node.name}`,
+            output: lines.join("\n"),
+            metadata: { node, edges },
           }
         }).pipe(Effect.orDie),
     }
   }),
 )
 
-const UpdateNodeParameters = Schema.Struct({
-  id: Schema.String.annotate({ description: "ID of the node" }),
-  name: Schema.optional(Schema.String).annotate({ description: "New node name" }),
-  defaultSemantics: Schema.optional(Schema.String).annotate({ description: "New semantic description" }),
-  aliases: Schema.optional(Schema.Array(Schema.String)).annotate({ description: "New list of aliases" }),
-  contextId: Schema.optional(Schema.String).annotate({ description: "ID of a different context to move the node to" }),
+const FindConceptsParameters = Schema.Struct({
+  query: Schema.String.annotate({ description: "Name, alias, or semantic search query" }),
 })
 
-export const DesignUpdateNodeTool = Tool.define<
-  typeof UpdateNodeParameters,
+export const DesignFindConceptsTool = Tool.define<
+  typeof FindConceptsParameters,
   Record<string, unknown>,
   Design.Service
 >(
-  "design_update_node",
+  "design_find_concepts",
   Effect.gen(function* () {
     const design = yield* Design.Service
     return {
-      description: "Update a node's name, semantics, aliases, or context.",
-      parameters: UpdateNodeParameters,
+      description: designToolDescription("Find concepts by name, alias, or semantics."),
+      parameters: FindConceptsParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const patch = {} as Record<string, unknown>
-          if (args.name !== undefined) patch.name = args.name
-          if (args.defaultSemantics !== undefined) patch.defaultSemantics = args.defaultSemantics
-          if (args.aliases !== undefined) patch.aliases = [...args.aliases]
-          if (args.contextId !== undefined) patch.contextId = args.contextId
-          const delta: GraphAgentTypes.GraphDelta = {
-            updateNodes: [{ id: args.id, patch: patch as Partial<DesignTypes.Node> }],
-          }
-          const result = yield* design.proposeChanges(delta)
-          const updated = result.delta?.updateNodes?.[0]
-          const semanticsPart = updated?.patch.defaultSemantics ? `; semantics: ${updated.patch.defaultSemantics}` : ""
-          return {
-            title: `Updated node ${updated?.patch.name ?? args.id}`,
-            output: `Node ${updated?.patch.name ?? args.id} (${args.id})${semanticsPart}`,
-            metadata: { nodeId: args.id },
-          }
-        }).pipe(Effect.orDie),
-    }
-  }),
-)
-
-const RetireNodeParameters = Schema.Struct({
-  id: Schema.String.annotate({ description: "ID of the node" }),
-  retired: Schema.Boolean.annotate({ description: "True to retire, false to unretire" }),
-})
-
-export const DesignRetireNodeTool = Tool.define<
-  typeof RetireNodeParameters,
-  Record<string, unknown>,
-  Design.Service
->(
-  "design_retire_node",
-  Effect.gen(function* () {
-    const design = yield* Design.Service
-    return {
-      description: "Mark a node as retired (or unretire it). Retired nodes stay in the graph but are excluded from active design work.",
-      parameters: RetireNodeParameters,
-      execute: (args, ctx) =>
-        Effect.gen(function* () {
-          const delta: GraphAgentTypes.GraphDelta = {
-            updateNodes: [{ id: args.id, patch: { retired: args.retired } }],
-          }
-          const result = yield* design.proposeChanges(delta)
-          const updated = result.delta?.updateNodes?.[0]
-          const retired = updated?.patch.retired ?? args.retired
-          return {
-            title: `${retired ? "Retired" : "Unretired"} node ${args.id}`,
-            output: `Node ${args.id}`,
-            metadata: { nodeId: args.id, retired },
-          }
-        }).pipe(Effect.orDie),
-    }
-  }),
-)
-
-const DeleteNodeParameters = Schema.Struct({
-  id: Schema.String.annotate({ description: "ID of the node" }),
-})
-
-export const DesignDeleteNodeTool = Tool.define<
-  typeof DeleteNodeParameters,
-  Record<string, unknown>,
-  Design.Service
->(
-  "design_delete_node",
-  Effect.gen(function* () {
-    const design = yield* Design.Service
-    return {
-      description: "Permanently delete a node and all its connected edges. Use with caution.",
-      parameters: DeleteNodeParameters,
-      execute: (args, ctx) =>
-        Effect.gen(function* () {
-          const delta: GraphAgentTypes.GraphDelta = { deleteNodeIds: [args.id] }
-          yield* design.proposeChanges(delta)
-          return {
-            title: "Deleted node",
-            output: `Node ${args.id} and its connected edges removed.`,
-            metadata: { nodeId: args.id },
-          }
-        }).pipe(Effect.orDie),
-    }
-  }),
-)
-
-const FindNodesByNameParameters = Schema.Struct({
-  name: Schema.String.annotate({ description: "Name or alias to search for" }),
-  contextId: Schema.optional(Schema.String).annotate({ description: "Optional context ID to limit the search" }),
-})
-
-export const DesignFindNodesByNameTool = Tool.define<
-  typeof FindNodesByNameParameters,
-  Record<string, unknown>,
-  Design.Service
->(
-  "design_find_nodes_by_name",
-  Effect.gen(function* () {
-    const design = yield* Design.Service
-    return {
-      description: "Find nodes by name or alias, optionally restricted to a context.",
-      parameters: FindNodesByNameParameters,
-      execute: (args, ctx) =>
-        Effect.gen(function* () {
-          const nodes = yield* design.findNodesByName(args.name, args.contextId)
+          const state = yield* design.getAccumulatedGraphState(ctx.sessionID)
+          const nodes = state.nodes.filter(
+            (n) => n.name === args.query || n.aliases.includes(args.query) || n.defaultSemantics.includes(args.query),
+          )
           const lines = nodes.map((n) => `- ${n.name} (${n.id}) [ctx: ${n.contextId}]`)
           return {
-            title: `Search results for "${args.name}"`,
-            output: lines.join("\n") || "No matching nodes.",
+            title: `Concept search: "${args.query}"`,
+            output: lines.join("\n") || "No matching concepts.",
             metadata: { count: nodes.length },
           }
         }).pipe(Effect.orDie),
@@ -366,171 +480,33 @@ export const DesignFindNodesByNameTool = Tool.define<
   }),
 )
 
-const CreateEdgeParameters = Schema.Struct({
-  leftNodeId: Schema.String.annotate({ description: "ID of the left/source node" }),
-  rightNodeId: Schema.String.annotate({ description: "ID of the right/target node" }),
-  prototypeId: Schema.String.annotate({ description: "ID of the relation prototype" }),
-  parameters: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)).annotate({
-    description: "Edge parameters including semantics overrides",
-  }),
+const GetRelationsParameters = Schema.Struct({
+  concept_id: Schema.String.annotate({ description: "Concept ID" }),
 })
 
-export const DesignCreateEdgeTool = Tool.define<
-  typeof CreateEdgeParameters,
+export const DesignGetRelationsTool = Tool.define<
+  typeof GetRelationsParameters,
   Record<string, unknown>,
   Design.Service
 >(
-  "design_create_edge",
+  "design_get_relations",
   Effect.gen(function* () {
     const design = yield* Design.Service
     return {
-      description:
-        "Create or replace an edge between two nodes. Only one edge can exist between a node pair. Use the 'aggregate' prototype for whole-part relationships unless another prototype is clearly more appropriate.",
-      parameters: CreateEdgeParameters,
+      description: designToolDescription("Get all relations for a concept."),
+      parameters: GetRelationsParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const delta: GraphAgentTypes.GraphDelta = {
-            addEdges: [{
-              leftNodeId: args.leftNodeId,
-              rightNodeId: args.rightNodeId,
-              prototypeId: args.prototypeId,
-              parameters: args.parameters ?? {},
-              createdAt: 0,
-              updatedAt: 0,
-            }],
-          }
-          const result = yield* design.proposeChanges(delta)
-          const edge = result.delta?.addEdges?.[0]
-          return {
-            title: `Created edge`,
-            output: `Edge ${edge?.leftNodeId ?? args.leftNodeId} --[${edge?.prototypeId ?? args.prototypeId}]--> ${edge?.rightNodeId ?? args.rightNodeId}`,
-            metadata: {
-              leftNodeId: edge?.leftNodeId ?? args.leftNodeId,
-              rightNodeId: edge?.rightNodeId ?? args.rightNodeId,
-              prototypeId: edge?.prototypeId ?? args.prototypeId,
-            },
-          }
-        }).pipe(Effect.orDie),
-    }
-  }),
-)
-
-const UpdateEdgeParameters = Schema.Struct({
-  leftNodeId: Schema.String.annotate({ description: "ID of the left/source node" }),
-  rightNodeId: Schema.String.annotate({ description: "ID of the right/target node" }),
-  prototypeId: Schema.optional(Schema.String).annotate({ description: "New relation prototype ID" }),
-  parameters: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)).annotate({
-    description: "New edge parameters",
-  }),
-})
-
-export const DesignUpdateEdgeTool = Tool.define<
-  typeof UpdateEdgeParameters,
-  Record<string, unknown>,
-  Design.Service
->(
-  "design_update_edge",
-  Effect.gen(function* () {
-    const design = yield* Design.Service
-    return {
-      description: "Update the prototype or parameters of an existing edge.",
-      parameters: UpdateEdgeParameters,
-      execute: (args, ctx) =>
-        Effect.gen(function* () {
-          const patch = {} as Record<string, unknown>
-          if (args.prototypeId !== undefined) patch.prototypeId = args.prototypeId
-          if (args.parameters !== undefined) patch.parameters = args.parameters
-          const delta: GraphAgentTypes.GraphDelta = {
-            updateEdges: [{
-              leftNodeId: args.leftNodeId,
-              rightNodeId: args.rightNodeId,
-              patch: patch as Partial<DesignTypes.Edge>,
-            }],
-          }
-          yield* design.proposeChanges(delta)
-          const edges = yield* design.listEdges()
-          const edge = edges.find(
-            (e) => e.leftNodeId === args.leftNodeId && e.rightNodeId === args.rightNodeId,
+          const state = yield* design.getAccumulatedGraphState(ctx.sessionID)
+          const edges = state.edges.filter((e) => e.leftNodeId === args.concept_id || e.rightNodeId === args.concept_id)
+          const lines = edges.map(
+            (e) =>
+              `- ${e.leftNodeId} --[${e.prototypeId}]--> ${e.rightNodeId} (${JSON.stringify(e.parameters ?? {})})`,
           )
           return {
-            title: `Updated edge`,
-            output: `Edge ${args.leftNodeId} --[${edge?.prototypeId ?? args.prototypeId}]--> ${args.rightNodeId}`,
-            metadata: {
-              leftNodeId: args.leftNodeId,
-              rightNodeId: args.rightNodeId,
-              prototypeId: edge?.prototypeId ?? args.prototypeId,
-            },
-          }
-        }).pipe(Effect.orDie),
-    }
-  }),
-)
-
-const DeleteEdgeParameters = Schema.Struct({
-  leftNodeId: Schema.String.annotate({ description: "ID of the left/source node" }),
-  rightNodeId: Schema.String.annotate({ description: "ID of the right/target node" }),
-})
-
-export const DesignDeleteEdgeTool = Tool.define<
-  typeof DeleteEdgeParameters,
-  Record<string, unknown>,
-  Design.Service
->(
-  "design_delete_edge",
-  Effect.gen(function* () {
-    const design = yield* Design.Service
-    return {
-      description: "Delete an edge between two nodes.",
-      parameters: DeleteEdgeParameters,
-      execute: (args, ctx) =>
-        Effect.gen(function* () {
-          const delta: GraphAgentTypes.GraphDelta = {
-            deleteEdgeKeys: [DesignTypes.edgeKey(args.leftNodeId, args.rightNodeId)],
-          }
-          yield* design.proposeChanges(delta)
-          return {
-            title: "Deleted edge",
-            output: `Edge ${args.leftNodeId} <-> ${args.rightNodeId} removed.`,
-            metadata: { leftNodeId: args.leftNodeId, rightNodeId: args.rightNodeId },
-          }
-        }).pipe(Effect.orDie),
-    }
-  }),
-)
-
-const CreatePrototypeParameters = Schema.Struct({
-  id: Schema.optional(Schema.String).annotate({ description: "Optional explicit prototype ID" }),
-  name: Schema.String.annotate({ description: "Prototype display name" }),
-  defaultSemantics: Schema.optional(Schema.String).annotate({ description: "Default meaning of this relation" }),
-  parameterSchema: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)).annotate({
-    description: "Schema for edge parameters",
-  }),
-})
-
-export const DesignCreatePrototypeTool = Tool.define<
-  typeof CreatePrototypeParameters,
-  Record<string, unknown>,
-  Design.Service
->(
-  "design_create_prototype",
-  Effect.gen(function* () {
-    const design = yield* Design.Service
-    return {
-      description:
-        "Create a new relation prototype (e.g., aggregate, compose, depend, inherit). Prototypes define the types of edges you can draw between nodes.",
-      parameters: CreatePrototypeParameters,
-      execute: (args, ctx) =>
-        Effect.gen(function* () {
-          const proto = yield* design.createPrototype({
-            id: args.id,
-            name: args.name,
-            defaultSemantics: args.defaultSemantics,
-            parameterSchema: args.parameterSchema,
-          })
-          return {
-            title: `Created prototype ${proto.name}`,
-            output: `Prototype ${proto.name} (${proto.id})`,
-            metadata: { prototypeId: proto.id },
+            title: "Relations",
+            output: lines.join("\n") || "No relations.",
+            metadata: { count: edges.length },
           }
         }).pipe(Effect.orDie),
     }
@@ -548,15 +524,15 @@ export const DesignListPrototypesTool = Tool.define<
   Effect.gen(function* () {
     const design = yield* Design.Service
     return {
-      description: "List all relation prototypes available in the design graph.",
+      description: designToolDescription("List all relation prototypes."),
       parameters: ListPrototypesParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
           const prototypes = yield* design.listPrototypes()
-          const lines = prototypes.map((p) => `- ${p.name} (${p.id})`)
+          const lines = prototypes.map((p) => `- ${p.name} (${p.id}): ${p.defaultSemantics || "no semantics"}`)
           return {
-            title: "Prototypes",
-            output: lines.join("\n") || "No prototypes yet.",
+            title: "Relation prototypes",
+            output: lines.join("\n") || "No prototypes.",
             metadata: { count: prototypes.length },
           }
         }).pipe(Effect.orDie),
@@ -564,266 +540,401 @@ export const DesignListPrototypesTool = Tool.define<
   }),
 )
 
-const GetPrototypeParameters = Schema.Struct({
-  id: Schema.String.annotate({ description: "ID of the prototype" }),
+const ResolveReferenceParameters = Schema.Struct({
+  query: Schema.String.annotate({ description: "Concept name, alias, or partial reference to resolve" }),
 })
 
-export const DesignGetPrototypeTool = Tool.define<
-  typeof GetPrototypeParameters,
+export const DesignResolveReferenceTool = Tool.define<
+  typeof ResolveReferenceParameters,
   Record<string, unknown>,
   Design.Service
 >(
-  "design_get_prototype",
+  "design_resolve_reference",
   Effect.gen(function* () {
     const design = yield* Design.Service
     return {
-      description: "Get a relation prototype by ID.",
-      parameters: GetPrototypeParameters,
+      description: designToolDescription("Resolve a fuzzy reference to the best matching concept or context."),
+      parameters: ResolveReferenceParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const proto = yield* design.getPrototype(args.id)
-          if (!proto) {
-            return { title: "Prototype not found", output: `No prototype with ID ${args.id}`, metadata: {} }
-          }
+          const result = yield* design.resolveReference({ reference: args.query })
           return {
-            title: `Prototype ${proto.name}`,
-            output: `ID: ${proto.id}\nName: ${proto.name}\nSemantics: ${proto.defaultSemantics}`,
-            metadata: { prototype: proto },
+            title: `Resolved "${args.query}"`,
+            output: `${result.action === "created" ? "Created" : "Matched"} ${result.fullName} (${result.nodeId})`,
+            metadata: { action: result.action, nodeId: result.nodeId, fullName: result.fullName },
           }
         }).pipe(Effect.orDie),
     }
   }),
 )
 
-const ListNodesParameters = Schema.Struct({})
-
-export const DesignListNodesTool = Tool.define<
-  typeof ListNodesParameters,
-  Record<string, unknown>,
-  Design.Service
->(
-  "design_list_nodes",
-  Effect.gen(function* () {
-    const design = yield* Design.Service
-    return {
-      description: "List all nodes in the design graph.",
-      parameters: ListNodesParameters,
-      execute: (args, ctx) =>
-        Effect.gen(function* () {
-          const nodes = yield* design.listNodes()
-          const lines = nodes.map((n) => `- ${n.name} (${n.id}) [ctx: ${n.contextId}]${n.retired ? " [retired]" : ""}`)
-          return {
-            title: "Nodes",
-            output: lines.join("\n") || "No nodes yet.",
-            metadata: { count: nodes.length },
-          }
-        }).pipe(Effect.orDie),
-    }
-  }),
-)
-
-const ListEdgesParameters = Schema.Struct({})
-
-export const DesignListEdgesTool = Tool.define<
-  typeof ListEdgesParameters,
-  Record<string, unknown>,
-  Design.Service
->(
-  "design_list_edges",
-  Effect.gen(function* () {
-    const design = yield* Design.Service
-    return {
-      description: "List all edges in the design graph.",
-      parameters: ListEdgesParameters,
-      execute: (args, ctx) =>
-        Effect.gen(function* () {
-          const edges = yield* design.listEdges()
-          const lines = edges.map((e) => `- ${e.leftNodeId} --[${e.prototypeId}]--> ${e.rightNodeId}`)
-          return {
-            title: "Edges",
-            output: lines.join("\n") || "No edges yet.",
-            metadata: { count: edges.length },
-          }
-        }).pipe(Effect.orDie),
-    }
-  }),
-)
-
-const ShowWorkingSetParameters = Schema.Struct({})
-
-export const DesignShowWorkingSetTool = Tool.define<
-  typeof ShowWorkingSetParameters,
-  Record<string, unknown>,
-  Design.Service
->(
-  "design_show_working_set",
-  Effect.gen(function* () {
-    const design = yield* Design.Service
-    return {
-      description: "Show the current working set of active nodes and contexts.",
-      parameters: ShowWorkingSetParameters,
-      execute: (args, ctx) =>
-        Effect.gen(function* () {
-          const ws = yield* design.listWorkingSet()
-          return {
-            title: "Working Set",
-            output: `Active contexts: ${ws.contextIds.join(", ") || "none"}\nActive nodes: ${ws.nodeIds.join(", ") || "none"}`,
-            metadata: ws,
-          }
-        }).pipe(Effect.orDie),
-    }
-  }),
-)
-
-const ActivateContextParameters = Schema.Struct({
-  contextId: Schema.String.annotate({ description: "ID of the context to activate" }),
+const DefineContextParameters = Schema.Struct({
+  name: Schema.String.annotate({ description: "Context name" }),
+  semantics: Schema.optional(Schema.String).annotate({ description: "Context semantics" }),
 })
 
-export const DesignActivateContextTool = Tool.define<
-  typeof ActivateContextParameters,
+export const DesignDefineContextTool = Tool.define<
+  typeof DefineContextParameters,
   Record<string, unknown>,
   Design.Service
 >(
-  "design_activate_context",
+  "design_define_context",
   Effect.gen(function* () {
     const design = yield* Design.Service
     return {
-      description: "Activate a context in the working set. New references without an explicit context will prefer the most recently activated context.",
-      parameters: ActivateContextParameters,
+      description: designToolDescription("Define a new bounded context."),
+      parameters: DefineContextParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          yield* design.activateContext(args.contextId)
+          const context = yield* design.createContext({ name: args.name, semantics: args.semantics })
           return {
-            title: "Activated context",
-            output: `Context ${args.contextId} is now active in the working set.`,
-            metadata: { contextId: args.contextId },
+            title: `Defined context ${context.name}`,
+            output: `Context ${context.name} (${context.id})`,
+            metadata: { contextId: context.id },
           }
         }).pipe(Effect.orDie),
     }
   }),
 )
 
-const ActivateNodeParameters = Schema.Struct({
-  nodeId: Schema.String.annotate({ description: "ID of the node to activate" }),
+const DefineConceptParameters = Schema.Struct({
+  name: Schema.String.annotate({ description: "Concept name" }),
+  context: Schema.String.annotate({ description: "Context name or ID" }),
+  kind: Schema.optional(Schema.String).annotate({ description: "Concept kind" }),
+  semantics: Schema.optional(Schema.String).annotate({ description: "Detailed semantic description" }),
+  aliases: Schema.optional(Schema.Array(Schema.String)).annotate({ description: "Alternative names" }),
 })
 
-export const DesignActivateNodeTool = Tool.define<
-  typeof ActivateNodeParameters,
+export const DesignDefineConceptTool = Tool.define<
+  typeof DefineConceptParameters,
   Record<string, unknown>,
   Design.Service
 >(
-  "design_activate_node",
+  "design_define_concept",
   Effect.gen(function* () {
     const design = yield* Design.Service
     return {
-      description: "Activate a node in the working set.",
-      parameters: ActivateNodeParameters,
+      description: designToolDescription("Define a new concept in a context."),
+      parameters: DefineConceptParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          yield* design.activateNode(args.nodeId)
+          const context = yield* design.findContextByNameOrId(args.context)
+          if (!context) {
+            return { title: "Context not found", output: `No context matching "${args.context}"`, metadata: {} }
+          }
+          yield* design.addAccumulatedNode(ctx.sessionID, {
+            name: args.name,
+            contextId: context.id,
+            kind: args.kind,
+            defaultSemantics: args.semantics,
+            aliases: args.aliases,
+          })
           return {
-            title: "Activated node",
-            output: `Node ${args.nodeId} is now active in the working set.`,
-            metadata: { nodeId: args.nodeId },
+            title: `Defined concept ${args.name}`,
+            output: `Concept ${args.name} queued in context ${context.name}`,
+            metadata: {},
           }
         }).pipe(Effect.orDie),
     }
   }),
 )
 
-const DeltaSchema = Schema.Struct({
-  addNodes: Schema.optional(Schema.Array(Schema.Struct({
-    id: Schema.optional(Schema.String).annotate({ description: "Optional temporary ID for referencing this new node later in the same delta" }),
-    name: Schema.String.annotate({ description: "Node name" }),
-    contextId: Schema.String.annotate({ description: "ID of the bounded context" }),
-    kind: Schema.optional(Schema.String).annotate({ description: "Node kind; defaults to 'node'" }),
-    aliases: Schema.optional(Schema.Array(Schema.String)).annotate({ description: "Alternative names" }),
-    defaultSemantics: Schema.optional(Schema.String).annotate({ description: "Default semantic description" }),
-  }))),
-  updateNodes: Schema.optional(Schema.Array(Schema.Struct({
-    id: Schema.String.annotate({ description: "ID of the node to update" }),
-    patch: Schema.Record(Schema.String, Schema.Unknown).annotate({ description: "Fields to update: name, contextId, defaultSemantics, aliases, retired" }),
-  }))),
-  deleteNodeIds: Schema.optional(Schema.Array(Schema.String).annotate({ description: "IDs of nodes to delete" })),
-  addEdges: Schema.optional(Schema.Array(Schema.Struct({
-    leftNodeId: Schema.String.annotate({ description: "ID of the left/source node (temporary ID allowed)" }),
-    rightNodeId: Schema.String.annotate({ description: "ID of the right/target node (temporary ID allowed)" }),
-    prototypeId: Schema.String.annotate({ description: "ID of the relation prototype" }),
-    parameters: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)).annotate({ description: "Edge parameters" }),
-  }))),
-  updateEdges: Schema.optional(Schema.Array(Schema.Struct({
-    leftNodeId: Schema.String.annotate({ description: "ID of the left/source node" }),
-    rightNodeId: Schema.String.annotate({ description: "ID of the right/target node" }),
-    patch: Schema.Record(Schema.String, Schema.Unknown).annotate({ description: "Fields to update: prototypeId, parameters" }),
-  }))),
-  deleteEdgeKeys: Schema.optional(Schema.Array(Schema.String).annotate({ description: "Edge keys to delete, formatted as 'leftNodeId::rightNodeId'" })),
-}).annotate({ description: "Batch of graph changes. Use exact field names: addNodes, updateNodes, deleteNodeIds, addEdges, updateEdges, deleteEdgeKeys." })
-
-const ProposeChangeParameters = Schema.Struct({
-  delta: DeltaSchema,
+const RefineConceptParameters = Schema.Struct({
+  concept: Schema.String.annotate({ description: "Concept name or ID" }),
+  semantics: Schema.optional(Schema.String).annotate({ description: "Updated semantic description" }),
+  aliases: Schema.optional(Schema.Array(Schema.String)).annotate({ description: "Updated aliases" }),
+  kind: Schema.optional(Schema.String).annotate({ description: "Updated kind" }),
 })
 
-export const DesignProposeChangeTool = Tool.define<
-  typeof ProposeChangeParameters,
+export const DesignRefineConceptTool = Tool.define<
+  typeof RefineConceptParameters,
   Record<string, unknown>,
   Design.Service
 >(
-  "design_propose_change",
+  "design_refine_concept",
   Effect.gen(function* () {
     const design = yield* Design.Service
     return {
-      description:
-        "design_propose_change: the ONLY tool for graph mutations. Submit a complete batch of node and edge changes as a single GraphDelta. Use exact field names: addNodes, updateNodes, deleteNodeIds, addEdges, updateEdges, deleteEdgeKeys.",
-      parameters: ProposeChangeParameters,
-      parseOptions: { onExcessProperty: "error" },
+      description: designToolDescription("Refine an existing concept's semantics, aliases, or kind."),
+      parameters: RefineConceptParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const result = yield* design.proposeChanges(args.delta as GraphAgentTypes.GraphDelta)
+          const state = yield* design.getAccumulatedGraphState(ctx.sessionID)
+          const node = state.nodes.find(
+            (n) => n.id === args.concept || n.name === args.concept || n.aliases.includes(args.concept),
+          )
+          if (!node) {
+            return { title: "Concept not found", output: `No concept matching "${args.concept}"`, metadata: {} }
+          }
+          const patch: Record<string, unknown> = {}
+          if (args.semantics !== undefined) patch.defaultSemantics = args.semantics
+          if (args.aliases !== undefined) patch.aliases = [...args.aliases]
+          if (args.kind !== undefined) patch.kind = args.kind
+          yield* design.updateAccumulatedNode(ctx.sessionID, node.id, patch as Partial<GraphAgentTypes.NodeInput>)
           return {
-            title: "Change proposal",
-            output: result.summary,
-            metadata: { result },
+            title: `Refined concept ${node.name}`,
+            output: `Concept ${node.name} (${node.id}) queued for update`,
+            metadata: {},
           }
         }).pipe(Effect.orDie),
     }
   }),
 )
+
+const WithdrawConceptParameters = Schema.Struct({
+  concept: Schema.String.annotate({ description: "Concept name or ID" }),
+  cascade: Schema.optional(Schema.Boolean).annotate({ description: "Whether to also delete connected edges" }),
+})
+
+export const DesignWithdrawConceptTool = Tool.define<
+  typeof WithdrawConceptParameters,
+  Record<string, unknown>,
+  Design.Service
+>(
+  "design_withdraw_concept",
+  Effect.gen(function* () {
+    const design = yield* Design.Service
+    return {
+      description: designToolDescription("Withdraw (delete) a concept from the design graph."),
+      parameters: WithdrawConceptParameters,
+      execute: (args, ctx) =>
+        Effect.gen(function* () {
+          const state = yield* design.getAccumulatedGraphState(ctx.sessionID)
+          const node = state.nodes.find(
+            (n) => n.id === args.concept || n.name === args.concept || n.aliases.includes(args.concept),
+          )
+          if (!node) {
+            return { title: "Concept not found", output: `No concept matching "${args.concept}"`, metadata: {} }
+          }
+          if (args.cascade) {
+            const edges = state.edges.filter((e) => e.leftNodeId === node.id || e.rightNodeId === node.id)
+            for (const edge of edges) {
+              yield* design.deleteAccumulatedEdge(ctx.sessionID, edge.leftNodeId, edge.rightNodeId)
+            }
+          }
+          yield* design.deleteAccumulatedNode(ctx.sessionID, node.id)
+          return {
+            title: `Withdrew concept ${node.name}`,
+            output: `Concept ${node.name} (${node.id}) queued for removal.`,
+            metadata: {},
+          }
+        }).pipe(Effect.orDie),
+    }
+  }),
+)
+
+const RelateConceptsParameters = Schema.Struct({
+  from: Schema.String.annotate({ description: "Source concept name or ID" }),
+  to: Schema.String.annotate({ description: "Target concept name or ID" }),
+  relation: Schema.String.annotate({ description: "Relation prototype name or ID" }),
+  semantics: Schema.optional(Schema.String).annotate({ description: "Relation semantics override" }),
+  constraints: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)).annotate({ description: "Relation parameters" }),
+})
+
+export const DesignRelateConceptsTool = Tool.define<
+  typeof RelateConceptsParameters,
+  Record<string, unknown>,
+  Design.Service
+>(
+  "design_relate_concepts",
+  Effect.gen(function* () {
+    const design = yield* Design.Service
+    return {
+      description: designToolDescription("Create or update a relation between two concepts."),
+      parameters: RelateConceptsParameters,
+      execute: (args, ctx) =>
+        Effect.gen(function* () {
+          const state = yield* design.getAccumulatedGraphState(ctx.sessionID)
+          const fromNode = state.nodes.find(
+            (n) => n.id === args.from || n.name === args.from || n.aliases.includes(args.from),
+          )
+          if (!fromNode) {
+            return { title: "Source concept not found", output: `No concept matching "${args.from}"`, metadata: {} }
+          }
+          const toNode = state.nodes.find(
+            (n) => n.id === args.to || n.name === args.to || n.aliases.includes(args.to),
+          )
+          if (!toNode) {
+            return { title: "Target concept not found", output: `No concept matching "${args.to}"`, metadata: {} }
+          }
+          const prototypes = yield* design.listPrototypes()
+          const prototype = prototypes.find((p) => p.id === args.relation || p.name === args.relation)
+          if (!prototype) {
+            return { title: "Prototype not found", output: `No prototype matching "${args.relation}"`, metadata: {} }
+          }
+          const parameters: Record<string, unknown> = { ...(args.constraints ?? {}) }
+          if (args.semantics !== undefined) parameters.semantics = args.semantics
+          yield* design.addAccumulatedEdge(ctx.sessionID, {
+            leftNodeId: fromNode.id,
+            rightNodeId: toNode.id,
+            prototypeId: prototype.id,
+            parameters,
+          })
+          return {
+            title: "Related concepts",
+            output: `${fromNode.name} --[${prototype.name}]--> ${toNode.name} queued`,
+            metadata: {},
+          }
+        }).pipe(Effect.orDie),
+    }
+  }),
+)
+
+const WithdrawRelationParameters = Schema.Struct({
+  from: Schema.String.annotate({ description: "Source concept name or ID" }),
+  to: Schema.String.annotate({ description: "Target concept name or ID" }),
+})
+
+export const DesignWithdrawRelationTool = Tool.define<
+  typeof WithdrawRelationParameters,
+  Record<string, unknown>,
+  Design.Service
+>(
+  "design_withdraw_relation",
+  Effect.gen(function* () {
+    const design = yield* Design.Service
+    return {
+      description: designToolDescription("Withdraw (delete) a relation between two concepts."),
+      parameters: WithdrawRelationParameters,
+      execute: (args, ctx) =>
+        Effect.gen(function* () {
+          const state = yield* design.getAccumulatedGraphState(ctx.sessionID)
+          const fromNode = state.nodes.find(
+            (n) => n.id === args.from || n.name === args.from || n.aliases.includes(args.from),
+          )
+          if (!fromNode) {
+            return { title: "Source concept not found", output: `No concept matching "${args.from}"`, metadata: {} }
+          }
+          const toNode = state.nodes.find(
+            (n) => n.id === args.to || n.name === args.to || n.aliases.includes(args.to),
+          )
+          if (!toNode) {
+            return { title: "Target concept not found", output: `No concept matching "${args.to}"`, metadata: {} }
+          }
+          yield* design.deleteAccumulatedEdge(ctx.sessionID, fromNode.id, toNode.id)
+          return {
+            title: "Withdrew relation",
+            output: `${fromNode.name} <-> ${toNode.name} queued for removal`,
+            metadata: {},
+          }
+        }).pipe(Effect.orDie),
+    }
+  }),
+)
+
+const DefineRelationPrototypeParameters = Schema.Struct({
+  name: Schema.String.annotate({ description: "Prototype name" }),
+  semantics: Schema.optional(Schema.String).annotate({ description: "Default semantics" }),
+  constraints: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)).annotate({ description: "Parameter schema" }),
+})
+
+export const DesignDefineRelationPrototypeTool = Tool.define<
+  typeof DefineRelationPrototypeParameters,
+  Record<string, unknown>,
+  Design.Service
+>(
+  "design_define_relation_prototype",
+  Effect.gen(function* () {
+    const design = yield* Design.Service
+    return {
+      description: designToolDescription("Define a new relation prototype."),
+      parameters: DefineRelationPrototypeParameters,
+      execute: (args, ctx) =>
+        Effect.gen(function* () {
+          const proto = yield* design.createPrototype({
+            name: args.name,
+            defaultSemantics: args.semantics,
+            parameterSchema: args.constraints,
+          })
+          return {
+            title: `Defined prototype ${proto.name}`,
+            output: `Prototype ${proto.name} (${proto.id})`,
+            metadata: { prototypeId: proto.id },
+          }
+        }).pipe(Effect.orDie),
+    }
+  }),
+)
+
+const ApplyChangesParameters = Schema.Struct({})
+
+export const DesignApplyChangesTool = Tool.define<
+  typeof ApplyChangesParameters,
+  Record<string, unknown>,
+  Design.Service
+>(
+  "design_apply_changes",
+  Effect.gen(function* () {
+    const design = yield* Design.Service
+    return {
+      description: designToolDescription("Apply all queued graph changes in this subagent session."),
+      parameters: ApplyChangesParameters,
+      execute: (args, ctx) =>
+        Effect.gen(function* () {
+          yield* design.applyAccumulatedChanges(ctx.sessionID)
+          return {
+            title: "Changes applied",
+            output: "All queued changes have been applied to the design graph.",
+            metadata: {},
+          }
+        }).pipe(Effect.orDie),
+    }
+  }),
+)
+
+const ClearChangesParameters = Schema.Struct({})
+
+export const DesignClearChangesTool = Tool.define<
+  typeof ClearChangesParameters,
+  Record<string, unknown>,
+  Design.Service
+>(
+  "design_clear_changes",
+  Effect.gen(function* () {
+    const design = yield* Design.Service
+    return {
+      description: designToolDescription("Discard all queued graph changes in this subagent session."),
+      parameters: ClearChangesParameters,
+      execute: (args, ctx) =>
+        Effect.gen(function* () {
+          yield* design.clearAccumulatedChanges(ctx.sessionID)
+          return {
+            title: "Changes cleared",
+            output: "All queued changes have been discarded.",
+            metadata: {},
+          }
+        }).pipe(Effect.orDie),
+    }
+  }),
+)
+
+export const ChatAgentDesignTools = [
+  DesignAskGraphTool,
+  DesignRequestChangeTool,
+  DesignSummarizeDesignTool,
+  DesignSearchProjectTool,
+  DesignSearchWebTool,
+]
 
 export const GraphAgentDesignTools = {
-  DesignCreateContextTool,
-  DesignUpdateContextTool,
-  DesignCreateNodeTool,
-  DesignUpdateNodeTool,
-  DesignRetireNodeTool,
-  DesignDeleteNodeTool,
-  DesignCreateEdgeTool,
-  DesignUpdateEdgeTool,
-  DesignDeleteEdgeTool,
-  DesignCreatePrototypeTool,
-} as const
-
-const GetStateParameters = Schema.Struct({})
-
-export const DesignGetStateTool = Tool.define<
-  typeof GetStateParameters,
-  Record<string, unknown>,
-  Design.Service
->(
-  "design_get_state",
-  Effect.gen(function* () {
-    const design = yield* Design.Service
-    return {
-      description: "Get the full current design graph state (contexts, nodes, edges, prototypes, working set, event log).",
-      parameters: GetStateParameters,
-      execute: (args, ctx) =>
-        Effect.gen(function* () {
-          const state = yield* design.getState()
-          return {
-            title: "Design state",
-            output: `Contexts: ${state.contexts.length}\nNodes: ${state.nodes.length}\nEdges: ${state.edges.length}\nPrototypes: ${state.prototypes.length}\nEvents: ${state.eventLog?.events.length ?? 0}`,
-            metadata: { state },
-          }
-        }).pipe(Effect.orDie),
-    }
-  }),
-)
+  DesignResolveReferenceTool,
+  DesignGetDesignTool,
+  DesignGetContextTool,
+  DesignGetConceptTool,
+  DesignFindConceptsTool,
+  DesignGetRelationsTool,
+  DesignListPrototypesTool,
+  DesignDefineContextTool,
+  DesignDefineConceptTool,
+  DesignRefineConceptTool,
+  DesignWithdrawConceptTool,
+  DesignRelateConceptsTool,
+  DesignWithdrawRelationTool,
+  DesignDefineRelationPrototypeTool,
+  DesignWorksetGetTool,
+  DesignWorksetAddTool,
+  DesignWorksetRemoveTool,
+  DesignWorksetExpandTool,
+  DesignApplyChangesTool,
+  DesignClearChangesTool,
+}
