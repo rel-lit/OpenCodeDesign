@@ -28,16 +28,6 @@ export const DesignAskGraphTool = Tool.define(
       parameters: AskGraphParameters,
       execute: (args: Schema.Schema.Type<typeof AskGraphParameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
-          const sync = yield* design.checkChatAgentSync().pipe(
-            Effect.catchTag("DesignStaleContextError" as const, (error) => Effect.succeed(error)),
-          )
-          if (sync instanceof VersionSync.StaleContextError) {
-            return {
-              title: "Design sync required",
-              output: sync.message,
-              metadata: { syncRequired: true } as Record<string, unknown>,
-            }
-          }
           const result = yield* task.execute(
             {
               description: "Design cognition",
@@ -46,6 +36,7 @@ export const DesignAskGraphTool = Tool.define(
             },
             ctx,
           )
+          yield* design.bumpVersion("chat-agent")
           return {
             title: "Design cognition",
             output: result.output,
@@ -114,16 +105,6 @@ export const DesignSummarizeDesignTool = Tool.define(
       parameters: SummarizeDesignParameters,
       execute: (args: Schema.Schema.Type<typeof SummarizeDesignParameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
-          const sync = yield* design.checkChatAgentSync().pipe(
-            Effect.catchTag("DesignStaleContextError" as const, (error) => Effect.succeed(error)),
-          )
-          if (sync instanceof VersionSync.StaleContextError) {
-            return {
-              title: "Design sync required",
-              output: sync.message,
-              metadata: { syncRequired: true } as Record<string, unknown>,
-            }
-          }
           const result = yield* task.execute(
             {
               description: "Design summary",
@@ -137,6 +118,7 @@ export const DesignSummarizeDesignTool = Tool.define(
             },
             ctx,
           )
+          yield* design.bumpVersion("chat-agent")
           return {
             title: "Design summary",
             output: result.output,

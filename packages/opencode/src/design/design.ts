@@ -64,7 +64,6 @@ export interface Interface {
   ) => Effect.Effect<void, GraphEngine.GraphEngineError>
   readonly getCurrentVersion: VersionSync.Interface["getCurrentVersion"]
   readonly bumpVersion: VersionSync.Interface["bumpVersion"]
-  readonly refreshChatAgentContext: VersionSync.Interface["refreshChatAgentContext"]
   readonly isVisualEditorDirty: VersionSync.Interface["isVisualEditorDirty"]
   readonly checkChatAgentSync: VersionSync.Interface["checkChatAgentSync"]
   readonly getTemporaryWorkingSet: TemporaryWorkingSet.Interface["get"]
@@ -413,9 +412,6 @@ export const layer = (options?: LayerOptions) =>
         }),
       ),
     )
-    const refreshChatAgentContext = Effect.fn("Design.refreshChatAgentContext")((version: VersionSync.GraphVersion) =>
-      use((state) => state.versionSync.refreshChatAgentContext(version)),
-    )
 
     const parseEdgeKey = (key: string): [string, string] => {
       const parts = key.split("::")
@@ -629,7 +625,6 @@ export const layer = (options?: LayerOptions) =>
       applyRawDelta,
       getCurrentVersion,
       bumpVersion,
-      refreshChatAgentContext,
       isVisualEditorDirty: () => use((state) => state.versionSync.isVisualEditorDirty()),
       checkChatAgentSync: () => use((state) => state.versionSync.checkChatAgentSync()),
       getTemporaryWorkingSet: (sessionID: string) => use((state) => state.temporaryWorkingSet.get(sessionID)),
