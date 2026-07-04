@@ -29,8 +29,8 @@ GraphAgent 是 ChatAgent 的设计认知外脑。它是唯一能直接理解图�
 2. **所有图操作必须由 GraphAgent 发起或执行。**
 3. **GraphAgent 返回给 ChatAgent 的永远是设计认知（自然语言 + 结构化洞察），不是原始图数据。**
 4. **活跃工作集是 GraphAgent 的 Cache，由系统自动控制。**
-5. **审批是系统级写入闸门，由 ChatAgent 作为编排层在父会话中驱动。**
-6. **审批通过后，ChatAgent 用 GraphAgent 审批阶段附带的结构化 delta 调用执行模式，减少 LLM 理解差异的影响。**
+5. **审批是系统级写入闸门，由 GraphAgent subagent 在子会话中发起；question 事件会自动冒泡到父会话 composer，用户在父会话中作答。**
+6. **审批通过后，GraphAgent subagent 内部进入执行模式完成写入，减少跨 Agent 理解差异的影响。**
 7. **每次成功的图变更都产生逻辑版本，并刷新 ChatAgent 对设计的认知。**
 
 ## Agent 角色
@@ -51,8 +51,8 @@ GraphAgent 是 ChatAgent 的设计认知外脑。它是唯一能直接理解图�
 - 职责：
   1. **设计认知供给**：根据 ChatAgent 的问题，在图中分析相关概念，返回自然语言摘要和洞察。
   2. **设计分析**：检查命名冲突、关系合理性、原则一致性、可合并项、隐含关系等。
-  3. **变更提案（judge 模式）**：把 ChatAgent 的自然语言意图转化为结构化图操作提案（含 GraphDelta），并解释设计理由。不执行写入。
-  4. **执行写入（execute 模式）**：用户确认后，基于已审批的 GraphDelta 写入图数据库。
+   3. **变更提案与审批（judge 模式）**：把 ChatAgent 的自然语言意图转化为 Change Plan，在子会话中调用 `question.ask` 请求用户审批；根据用户选择直接执行或返回给 ChatAgent。
+   4. **执行写入（execute 模式）**：基于已审批的 Change Plan 展开细节并写入图数据库。
   5. **后置审查**：Visual Editor 直接保存后，审查改动并给出建议。
 
 ### GraphAgent 子职责
@@ -72,20 +72,34 @@ GraphAgent 是同一个 subagent（`design-graph`），但根据调用时的 `mo
 - 输入：自然语言变更意图 + 活跃工作集快照 + 当前图版本。
 - 行为：
   1. 读图分析。
-  2. 把自然语言意图转化为结构化 GraphDelta。
+  2. 把自然语言意图转化为**变更计划（Change Plan）**——只描述核心设计决策，不展开完整节点/边字段。
   3. 检查冲突、重复、孤立、无效原型使用。
-  4. 返回 `change-proposal` 类型结果，包含 `proposal`（含 `delta`）。
-- **不执行写入，也不直接向用户提问。**
+  4. 调用 `question.ask` 向用户展示变更计划并请求审批。
+  5. 根据用户回答：
+     - **Apply**：内部转入 `execute` 模式，展开 Change Plan 细节并写入图数据库，返回 `change-applied`。
+     - **Reject**：返回 `rejected`。
+     - **Revise**：返回 `needs-clarification`，附带用户的修改意见。
+- **不生成完整 GraphDelta，但审批通过后会负责执行写入。**
 
 #### 3. 执行模式（`execute`）
 
-- 触发：ChatAgent 在父会话审批通过后调用 `design_execute_change(proposal.delta)`。
-- 输入：已经审批通过的结构化 GraphDelta。
+- 触发：通常由 `judge` 模式在子会话内部调用；`design_execute_change(plan)` 作为独立工具用于重新执行已保存的 Change Plan 或由 ChatAgent 显式触发。
+- 输入：已经审批通过的变更计划（Change Plan）。
 - 行为：
-  1. 基于给定的 delta 调用写工具（仍然需要 LLM 进行工具调用决策，但不再重新理解意图或生成新设计）。
-  2. 通过 `Design.applyRawDelta` 写入数据库。
-  3. bump version。
+  1. 基于已审批的计划，在子会话中一步步展开细节：
+     - 确定每个概念的具体名称、语义描述、别名。
+     - 确定每条关系的原型、参数、语义描述。
+     - 确定是否需要新建上下文或关系原型。
+  2. 调用语义化写工具把这些细节变成图变更。
+  3. 所有细节展开完成后，统一通过 `Design.applyRawDelta` 提交到数据库。
+  4. bump version。
 - 输出：`change-applied` 类型结果。
+
+**为什么分计划和执行**
+
+- 图是高级文档，节点和边包含大量自然语言描述、语义约束、别名等信息。
+- 审批时用户只能也没必要审完整 delta；审的是"要不要做这个设计方向"。
+- 执行阶段再慢慢敲定细节，但必须在已审批的计划约束内进行，避免与审批意图自相矛盾。
 
 #### 4. 摘要模式（`summarize`）
 
@@ -110,38 +124,31 @@ const designGraphPermissions = Permission.fromConfig({
   "*": "deny",
 
   // 读工具
-  design_get_state: "allow",
-  design_list_contexts: "allow",
+  design_get_design: "allow",
   design_get_context: "allow",
-  design_list_nodes: "allow",
-  design_get_node: "allow",
-  design_find_nodes_by_name: "allow",
-  design_list_edges: "allow",
+  design_get_concept: "allow",
+  design_find_concepts: "allow",
+  design_get_relations: "allow",
   design_list_prototypes: "allow",
-  design_get_prototype: "allow",
-  design_show_working_set: "allow",
 
-  // 写工具
-  design_create_context: "allow",
-  design_update_context: "allow",
-  design_create_node: "allow",
-  design_update_node: "allow",
-  design_retire_node: "allow",
-  design_delete_node: "allow",
-  design_create_edge: "allow",
-  design_update_edge: "allow",
-  design_delete_edge: "allow",
-  design_create_prototype: "allow",
+  // 写工具（语义化）
+  design_define_context: "allow",
+  design_define_concept: "allow",
+  design_refine_concept: "allow",
+  design_withdraw_concept: "allow",
+  design_relate_concepts: "allow",
+  design_withdraw_relation: "allow",
+  design_define_relation_prototype: "allow",
 
   // 引用解析
   design_resolve_reference: "allow",
 
-  // 向用户提问（GraphAgent 各模式均不直接使用；审批问题由 ChatAgent 根据 GraphAgent 返回值在父会话中发起）
+  // 向用户提问（judge 模式用 question.ask 发起审批）
   question: "allow",
 })
 ```
 
-注意：禁止 `task`（防止递归）和 `todowrite`。`design_execute_change` 的 delta 来自 `design_request_change` 的审批结果，不是自然语言。
+注意：禁止 `task`（防止递归）和 `todowrite`。`design_execute_change` 的 plan 来自 `design_request_change` 的审批结果。
 
 ### SearchAgent（检索子 Agent）
 
@@ -187,8 +194,8 @@ ChatAgent 只应该有"向专业 subagent 发请求"的工具，不应该有直�
 | 工具名 | 作用 | 底层实现 |
 |---|---|---|
 | `design_ask_graph` | 向 GraphAgent 请求设计认知。例如："当前设计如何理解空间维度？" | `task({ subagent_type: "design-graph" })`，mode=`cognition` |
-| `design_request_change` | 用自然语言描述变更意图。例如："我觉得空间维度应该划分为前方、侧翼、后方" | `task({ subagent_type: "design-graph" })`，mode=`judge` |
-| `design_execute_change` | 执行已审批的图变更。传入的是 judge 模式返回的结构化 delta。 | `task({ subagent_type: "design-graph" })`，mode=`execute` |
+| `design_request_change` | 用自然语言描述变更意图。subagent 会分析、生成 Change Plan、向用户请示，并在用户同意后执行。 | `task({ subagent_type: "design-graph" })`，mode=`judge` |
+| `design_execute_change` | 执行已审批的 Change Plan。用于重新执行之前保存的计划或 judge 返回 needs-clarification 后用户明确要执行的情况。 | `task({ subagent_type: "design-graph" })`，mode=`execute` |
 | `design_summarize_design` | 请求 GraphAgent 返回当前设计的自然语言摘要 | `task({ subagent_type: "design-graph" })`，mode=`summarize` |
 | `design_search_project` | 请求 SearchAgent 检索项目并对比设计 | `task({ subagent_type: "design-search" })` |
 | `design_search_web` | 请求 SearchAgent 联网搜索 | `task({ subagent_type: "design-search" })` |
@@ -208,6 +215,7 @@ ChatAgent 只应该有"向专业 subagent 发请求"的工具，不应该有直�
 - `design_resolve_reference`
 - `design_propose_change`（被 `design_request_change` 取代）
 - 所有 `design_create_*` / `design_update_*` / `design_delete_*`（本来就不应给 ChatAgent）
+- 所有旧的/语义化 GraphAgent 工具也不暴露给 ChatAgent（`design_define_*`, `design_refine_*`, `design_withdraw_*`, `design_get_design`, `design_find_concepts`, `design_get_relations` 等）
 
 ## GraphAgent 输入
 
@@ -245,8 +253,8 @@ interface DesignGraphSubagentInput {
 | 模式 | 触发方式 | GraphAgent 行为 |
 |---|---|---|
 | `cognition` | `design_ask_graph` | 分析问题，在图中寻找相关概念，返回设计认知 |
-| `judge` | `design_request_change` | 把自然语言意图转成结构化变更提案（含 delta），不执行 |
-| `execute` | `design_execute_change(delta)` | 基于已审批的 delta 调用写工具执行变更 |
+| `judge` | `design_request_change` | 把自然语言意图转成 Change Plan，向用户请示，批准后内部进入 execute 执行 |
+| `execute` | `design_execute_change(plan)` | 基于已审批的 Change Plan 调用写工具执行变更 |
 | `summarize` | `design_summarize_design` | 基于活跃工作集生成自然语言摘要 |
 | `review-save` | Visual Editor 保存后 | 审查已发生的改动，返回建议 |
 
@@ -274,7 +282,7 @@ interface DesignGraphSubagentOutput {
     references?: string[]   // 引用的节点 ID（GraphAgent 内部使用，ChatAgent 不需要理解）
   }>
 
-  // judge 模式返回的结构化提案
+  // judge 模式返回的变更计划（Change Plan）
   proposal?: {
     intent: string          // 设计意图
     rationale: string       // 设计理由
@@ -286,11 +294,53 @@ interface DesignGraphSubagentOutput {
     }>
     affectedNodes: string[]
     affectedEdges: string[]
-    delta: GraphDelta       // 已审批通过的结构化 delta，execute 模式直接使用
+    plan: ChangePlan        // 已审批通过的变更计划，execute 模式基于此展开细节
   }
 
   // 需要澄清的问题
   questions?: string[]
+}
+
+### 变更计划（Change Plan）
+
+Change Plan 是 judge 模式的输出，只描述核心设计决策，不展开完整字段。
+
+```typescript
+interface ChangePlan {
+  // 核心设计决策摘要
+  summary: string
+
+  // 新增/修改的概念（只给名称和所属上下文）
+  concepts?: Array<{
+    action: "create" | "update"
+    name: string
+    context: string
+    kind?: string
+    key_semantics?: string  // 关键语义，不是完整描述
+  }>
+
+  // 新增/修改的关系（只给两端和关系类型）
+  relations?: Array<{
+    action: "create" | "update" | "withdraw"
+    from: string
+    to: string
+    relation: string
+    key_semantics?: string
+  }>
+
+  // 需要新建的上下文
+  contexts?: Array<{
+    action: "create"
+    name: string
+    key_semantics?: string
+  }>
+
+  // 需要新建/修改的关系原型
+  prototypes?: Array<{
+    action: "create" | "update"
+    name: string
+    key_semantics?: string
+  }>
 }
 ```
 
@@ -331,6 +381,43 @@ interface DesignGraphSubagentOutput {
 
 ChatAgent 收到后，用自然语言向用户解释，不需要知道节点 ID。
 
+## GraphAgent 工具集（重新设计）
+
+GraphAgent 的工具面向**设计语义**，不是原始图数据操作。底层统一走 `Design.applyRawDelta`。
+
+### 读工具
+
+| 工具名 | 用途 |
+|---|---|
+| `design_get_design` | 获取当前设计的整体语义视图 |
+| `design_get_context(name_or_id)` | 获取一个上下文及其概念 |
+| `design_get_concept(name_or_id)` | 获取一个概念的语义、关系、邻近概念 |
+| `design_find_concepts(query)` | 按名称/别名/语义搜索概念 |
+| `design_get_relations(concept_id)` | 获取一个概念的关系 |
+| `design_list_prototypes` | 列出关系原型 |
+
+### 写工具（语义化）
+
+| 工具名 | 用途 |
+|---|---|
+| `design_define_context({ name, semantics })` | 定义新上下文 |
+| `design_define_concept({ name, context, kind, semantics, aliases })` | 定义新概念 |
+| `design_refine_concept({ concept, semantics, aliases, kind })` | 精炼/修改概念 |
+| `design_withdraw_concept({ concept, cascade })` | 撤回概念 |
+| `design_relate_concepts({ from, to, relation, semantics, constraints })` | 建立/修改关系 |
+| `design_withdraw_relation({ from, to })` | 撤回关系 |
+| `design_define_relation_prototype({ name, semantics, constraints })` | 定义关系原型 |
+
+### 写工具与 delta 的关系
+
+- execute 模式根据已审批的 Change Plan 调用这些语义化工具。
+- 每个工具内部生成对应的 delta 片段。
+- execute 模式维护一个待提交 delta accumulator。
+- 所有细节展开完成后，一次性调用 `Design.applyRawDelta` 提交。
+- 提交成功后 bump version。
+
+这样用户可以在 GraphAgent subagent 标签页中看到"定义概念 UserService"、"建立 UserService depends_on OrderService"等可读的执行步骤，而不是抽象的 delta 字段。
+
 ## 数据流
 
 ### 设计认知请求
@@ -357,22 +444,28 @@ ChatAgent 收到后，用自然语言向用户解释，不需要知道节点 ID�
       → 系统层：构建临时工作集
         → task({ subagent_type: "design-graph", mode: "judge" })
           → GraphAgent 审批模式分析意图
-            → 生成结构化 delta + 设计理由
-              → 返回 change-proposal
-                → ChatAgent 在父会话展示审批面板
-                  → 用户选择 "重新设计"
-                    → ChatAgent 与用户沟通，重新生成意图
-                    → 再次调用 design_request_change
-                  → 用户选择 "同意"
-                    → ChatAgent 调用 design_execute_change(proposal.delta)
-                      → task({ subagent_type: "design-graph", mode: "execute" })
-                        → GraphAgent 执行模式
-                          → 基于 delta 调用写工具
-                            → Design.applyRawDelta(delta)
+            → 生成 Change Plan + 设计理由
+              → 调用 question.ask（事件冒泡到父会话 composer）
+                → 用户在父会话 composer 中选择 Apply / Reject / Revise
+                  → Apply:
+                    → GraphAgent 内部转入 execute 模式
+                      → 基于 plan 展开细节
+                        → 调用语义化写工具
+                          → 累积 delta 片段
+                            → 统一 Design.applyRawDelta(delta)
                               → bump version
                                 → 返回 change-applied
                                   → ChatAgent 总结结果
+                  → Reject:
+                    → 返回 rejected
+                      → ChatAgent 向用户说明变更被拒绝
+                  → Revise:
+                    → 返回 needs-clarification（附带用户修改意见）
+                      → ChatAgent 与用户沟通，重新生成意图
+                        → 再次调用 design_request_change
 ```
+
+如果 judge 模式因计划不完整等原因未发起 question，则返回 `change-proposal`；ChatAgent 可择机调用 `design_execute_change(plan)` 进入 execute 模式。
 
 ### 图摘要请求
 
@@ -452,6 +545,8 @@ execute: (args, ctx) =>
       activeWorkingSet: activeWs,
       knownVersion: yield* getCurrentVersion(),
     })
+    // 子会话中的 question.ask 会自动冒泡到父会话 composer，
+    // 用户在父会话作答后，子会话继续执行。
     const result = yield* taskTool.execute({
       subagent_type: "design-graph",
       description: "Design change proposal",
@@ -476,23 +571,25 @@ interface DesignSummarizeDesignParameters {}
 
 ## 审批机制
 
-审批是**系统级写入闸门**，由 ChatAgent 作为编排层在**父会话**中驱动。
+审批是**系统级写入闸门**，由 **GraphAgent subagent 在子会话中发起**。OpenCode 的 `question.ask` 事件会自动从子会话冒泡到父会话 composer，因此用户在父会话 composer 中就能看到并回答子 Agent 提出的问题。
 
 ### 审批流程
 
 1. ChatAgent 调用 `design_request_change(intent)`。
-2. GraphAgent 以 `judge` 模式分析意图，返回 `change-proposal`，其中包含结构化 `proposal.delta`。
-3. ChatAgent 根据返回的 `proposal` 在父会话通过 `question.ask` 发起审批面板，展示 `proposal.intent` 和 `proposal.rationale`。
-4. 用户选择：
-   - **Apply**：ChatAgent 调用 `design_execute_change(proposal.delta)`，进入 GraphAgent `execute` 模式。
-   - **Reject**：ChatAgent 向用户说明变更被拒绝。
-   - **Revise**：ChatAgent 继续与用户沟通，重新生成意图，再次调用 `design_request_change`。
+2. GraphAgent 以 `judge` 模式分析意图，生成 Change Plan。
+3. GraphAgent 在子会话中调用 `question.ask`，问题事件冒泡到父会话 composer。
+4. 用户在父会话 composer 中看到审批面板，展示 `proposal.intent`、`proposal.rationale` 和 Change Plan 摘要。
+5. 用户选择：
+   - **Apply**：GraphAgent 在子会话内部转入 `execute` 模式，展开 Change Plan 细节并写入图数据库。
+   - **Reject**：GraphAgent 返回 `rejected`，ChatAgent 向用户说明变更被拒绝。
+   - **Revise**：GraphAgent 返回 `needs-clarification`（附带用户的修改意见），ChatAgent 继续与用户沟通，重新生成意图后再次调用 `design_request_change`。
 
-### 为什么 GraphAgent 不直接提问
+### 为什么由 GraphAgent 直接提问
 
-- v2 架构中，GraphAgent 只负责返回设计认知和结构化提案，不直接驱动用户界面。
-- ChatAgent 作为编排层，根据 GraphAgent 返回的 `proposal` 决定如何与用户交互。
-- 这样审批面板的问题内容、选项、展示方式由 ChatAgent 控制，更灵活，也符合原始架构中"审批面板是系统 UI"的定位。
+- `sessionTreeRequest` 已确认子会话的 `question.ask` 会自动冒泡到父会话 composer。
+- 审批问题和执行写入都围绕同一个 Change Plan，由 GraphAgent 自己控制可以减少跨 Agent 传递时的理解差异。
+- ChatAgent 仍然是编排层：它决定何时调用 `design_request_change`，并在变更被拒绝或需要澄清时继续对话。
+- 这样审批面板仍是系统 UI，只是驱动它的 Agent 是 GraphAgent 而非 ChatAgent。
 
 ### 问题设计
 
@@ -513,10 +610,12 @@ interface DesignSummarizeDesignParameters {}
 
 ### 执行模式说明
 
-- 执行模式接收已经审批通过的结构化 delta。
+- 执行模式接收已经审批通过的 Change Plan。
+- 执行模式由 GraphAgent 在子会话内部调用，不需要 ChatAgent 再次发起 `task`。
 - 执行模式仍然需要 LLM 进行工具调用决策（决定调用哪些设计工具以及调用顺序）。
-- 但执行模式不再重新理解意图或生成新的设计，而是基于已审批的 delta 进行工具调用。
+- 但执行模式不再重新理解意图或生成新的设计，而是基于已审批的 Change Plan 进行工具调用。
 - 这样可以减少 LLM 理解差异对执行结果的影响，但不能完全消除。
+- `design_execute_change(plan)` 作为独立工具保留，用于重新执行已保存的 Change Plan 或在特殊场景下由 ChatAgent 显式触发。
 
 ## 权限设计
 
@@ -526,30 +625,27 @@ interface DesignSummarizeDesignParameters {}
 const designGraphPermissions = Permission.fromConfig({
   "*": "deny",
 
-  // 允许直接调用 Design.Service 工具（GraphAgent 内部使用）
-  design_get_state: "allow",
-  design_list_contexts: "allow",
+  // 读工具
+  design_get_design: "allow",
   design_get_context: "allow",
-  design_list_nodes: "allow",
-  design_get_node: "allow",
-  design_find_nodes_by_name: "allow",
-  design_list_edges: "allow",
+  design_get_concept: "allow",
+  design_find_concepts: "allow",
+  design_get_relations: "allow",
   design_list_prototypes: "allow",
-  design_get_prototype: "allow",
-  design_show_working_set: "allow",
-  design_create_context: "allow",
-  design_update_context: "allow",
-  design_create_node: "allow",
-  design_update_node: "allow",
-  design_retire_node: "allow",
-  design_delete_node: "allow",
-  design_create_edge: "allow",
-  design_update_edge: "allow",
-  design_delete_edge: "allow",
-  design_create_prototype: "allow",
+
+  // 写工具（语义化）
+  design_define_context: "allow",
+  design_define_concept: "allow",
+  design_refine_concept: "allow",
+  design_withdraw_concept: "allow",
+  design_relate_concepts: "allow",
+  design_withdraw_relation: "allow",
+  design_define_relation_prototype: "allow",
+
+  // 引用解析
   design_resolve_reference: "allow",
 
-  // 允许向用户提问
+  // 向用户提问（judge 模式发起审批）
   question: "allow",
 })
 ```
@@ -593,6 +689,18 @@ const designChatPermissions = Permission.fromConfig({
   design_update_edge: "deny",
   design_delete_edge: "deny",
   design_create_prototype: "deny",
+
+  // 旧的语义化 GraphAgent 工具也禁止（未来统一用新工具）
+  design_define_context: "deny",
+  design_define_concept: "deny",
+  design_refine_concept: "deny",
+  design_withdraw_concept: "deny",
+  design_relate_concepts: "deny",
+  design_withdraw_relation: "deny",
+  design_define_relation_prototype: "deny",
+  design_get_design: "deny",
+  design_find_concepts: "deny",
+  design_get_relations: "deny",
 })
 ```
 
@@ -668,12 +776,12 @@ Visual Editor 仍然直接写 DB（raw save），因为 GUI 操作本身已是�
 | `design_ask_graph` 入口 | `design.ask_graph.start question=...` |
 | `design_request_change` 入口 | `design.request_change.start intent=...` |
 | `design_summarize_design` 入口 | `design.summarize_design.start` |
-| `design_execute_change` 入口 | `design.execute_change.start deltaKeys=...` |
+| `design_execute_change` 入口 | `design.execute_change.start planSummary=...` |
 | 启动 subagent | `design.subagent.launch mode=... subagent_type=design-graph` |
 | subagent 收到 prompt | `design-graph.subagent.start mode=... activeNodes=N` |
 | subagent 读图 | `design-graph.read tool=... args=...` |
 | subagent 扩展工作集 | `design-graph.workset.expand addedNodes=... reason=...` |
-| subagent 调用 question | `design-graph.question.ask options=...` |
+| subagent 调用 question（事件冒泡到父会话） | `design-graph.question.ask options=...` |
 | subagent 执行写工具 | `design-graph.write tool=...` |
 | `applyRawDelta` | `design.applyRawDelta addNodes=N addEdges=M ...` |
 | 版本 bump | `design.version.bumped sequence=N source=...` |
@@ -710,8 +818,8 @@ Visual Editor 仍然直接写 DB（raw save），因为 GUI 操作本身已是�
 3. 实现 subagent 内部逻辑：
    - 解析 prompt 中的 mode。
    - `cognition` 模式：读图、扩展工作集、返回洞察。
-   - `judge` 模式：把自然语言意图转成结构化 delta + 设计理由，不执行。
-   - `execute` 模式：基于已审批的 delta 调用写工具执行。
+   - `judge` 模式：把自然语言意图转成 Change Plan，调用 `question.ask` 请求审批；批准后内部进入 `execute` 模式执行写入。
+   - `execute` 模式：基于已审批的 Change Plan 展开细节，调用语义化写工具，累积 delta，统一提交。
    - `summarize` 模式：基于工作集生成摘要。
    - `review-save` 模式：审查 Visual Editor diff。
 
@@ -771,8 +879,8 @@ Your job is to talk with the user about the design of their project. You do NOT 
 
 Instead, you have specialized subagents:
 - `design_ask_graph`: Ask the design-graph subagent for design cognition. Use this when you need to understand what the current design means.
-- `design_request_change`: Ask the design-graph subagent to propose a design change. Describe the change in natural language. The subagent will return a structured proposal; you must then ask the user for approval before calling `design_execute_change`.
-- `design_execute_change`: Execute an already-approved design change. Only call this after the user has approved a proposal returned by `design_request_change`.
+- `design_request_change`: Ask the design-graph subagent to propose and request approval for a design change. Describe the change in natural language. The subagent will analyze the graph, generate a Change Plan, and ask the user for approval. If the user approves, the subagent will execute the change directly and report back to you.
+- `design_execute_change`: Execute an already-approved Change Plan. Use this only when you already have a Change Plan from a previous `design_request_change` that did not execute, or when the user explicitly asks you to re-execute a saved plan.
 - `design_summarize_design`: Ask the design-graph subagent for a summary of the current design.
 - `design_search_project`: Ask the search subagent to read the project and compare it with the design.
 - `design_search_web`: Ask the search subagent to search the web for relevant design references.
@@ -781,7 +889,7 @@ The design graph is maintained by the design-graph subagent. It will analyze the
 
 When the user talks about design concepts, always use `design_ask_graph` to get the current design cognition before responding.
 
-When the user wants to change the design, use `design_request_change` to get a proposal, then present the proposal to the user. If the user approves, call `design_execute_change` with the delta from the proposal.
+When the user wants to change the design, use `design_request_change`. The subagent will present the proposal to the user and execute it if approved. If the user rejects or asks to revise, continue the conversation based on the subagent's return value.
 ```
 
 ## design-graph Subagent Prompt 关键段落
@@ -797,8 +905,8 @@ Your users are:
 
 You work in one of these modes:
 - cognition: Answer a design question by analyzing the graph. Return natural language insights.
-- judge: Convert a natural language design intent into a structured change proposal (including a GraphDelta and rationale). Do NOT execute any writes.
-- execute: Receive an already-approved GraphDelta and execute it using the design graph write tools.
+- judge: Convert a natural language design intent into a structured change plan (NOT a full delta). The plan describes core design decisions only. Then call `question.ask` to request user approval. If the user approves, internally transition to execute mode and apply the change. If the user rejects, return `rejected`. If the user wants to revise, return `needs-clarification` with their feedback.
+- execute: Receive an already-approved change plan. Expand the plan into detailed concept/relationship definitions, then execute them using the semantic design tools.
 - summarize: Generate a natural language summary of the current design based on the active working set.
 - review-save: Review a diff from the Visual Editor and return suggestions.
 
@@ -807,15 +915,21 @@ You have access to all design graph tools. Use them to read and modify the graph
 For judge mode:
 1. Read the current graph state.
 2. Build or extend the temporary working set.
-3. Generate a GraphDelta that realizes the user's intent.
+3. Generate a Change Plan that captures the core design decisions implied by the user's intent.
 4. Check for conflicts, duplicates, orphaned nodes, and invalid prototype usage.
-5. Return a JSON result with type "change-proposal". Include the delta in the proposal.
+5. Call `question.ask` to present the Change Plan to the user. The question will surface in the parent session composer automatically.
+6. Wait for the user's answer.
+7. If Apply: internally transition to execute mode, expand the plan, and apply the delta.
+8. If Reject: return a JSON result with type "rejected".
+9. If Revise: return a JSON result with type "needs-clarification" and include the user's revision text in `summary`.
 
 For execute mode:
-1. Receive the approved GraphDelta.
-2. Use the design graph write tools to execute the delta.
-3. Bump the graph version.
-4. Return a JSON result with type "change-applied".
+1. Receive the approved Change Plan.
+2. Expand the plan into detailed concept definitions, relation definitions, semantics, aliases, etc.
+3. Use the semantic design tools to build up the corresponding GraphDelta.
+4. Apply the complete delta through Design.applyRawDelta.
+5. Bump the graph version.
+6. Return a JSON result with type "change-applied".
 
 Your final response must be a single JSON object matching the output schema. Do not wrap it in markdown.
 ```
