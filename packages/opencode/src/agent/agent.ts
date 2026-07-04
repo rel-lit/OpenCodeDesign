@@ -150,7 +150,7 @@ export const layer = Layer.effect(
           edit: "deny",
           write: "deny",
           apply_patch: "deny",
-          task: "deny",
+          task: "allow",
           todowrite: "deny",
           design_ask_graph: "allow",
           design_request_change: "allow",
