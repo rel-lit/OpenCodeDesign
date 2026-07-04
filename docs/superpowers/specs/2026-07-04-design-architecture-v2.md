@@ -265,10 +265,9 @@ GraphAgent 返回的是设计认知，不是原始图数据。
 interface DesignGraphSubagentOutput {
   type:
     | "cognition"           // 返回设计认知
-    | "change-proposal"     // 返回变更提案，等待确认
-    | "change-applied"      // 已执行变更
-    | "rejected"            // 请求被拒绝或不可行
-    | "needs-clarification" // 需要用户澄清
+    | "change-applied"      // judge 模式内 Apply 后已执行变更
+    | "rejected"            // 用户拒绝，子 Agent 已终止
+    | "needs-clarification" // 用户要求修订，子 Agent 已终止
 
   // 面向 ChatAgent 的自然语言摘要
   summary: string
@@ -281,7 +280,7 @@ interface DesignGraphSubagentOutput {
     references?: string[]   // 引用的节点 ID（GraphAgent 内部使用，ChatAgent 不需要理解）
   }>
 
-  // judge 模式返回的变更计划（Change Plan）
+  // judge 模式内部使用：把已生成的 Change Plan 传给 execute 模式
   proposal?: {
     intent: string          // 设计意图
     rationale: string       // 设计理由
