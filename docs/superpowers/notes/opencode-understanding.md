@@ -597,7 +597,7 @@ if (part.type === "subtask") {
 **关键结论**：
 
 - 如果希望 GraphAgent 的分析/工具调用过程对用户可见，**应把它改为原生 subagent**，通过 `task` 工具调用。
-- 要让 subagent 在写入 Design DB 前必须经过用户批准，可以：**拒绝给 subagent 分配 DB 写入工具，只给它返回 delta proposal 的能力**；父 agent 拿到 proposal 后，自己调用 `design_propose_change`（需要父 agent 权限允许），或者由父 agent 触发 `question.ask` 显式询问用户。
-- 也可以让 subagent 拥有 `question.ask` 权限，由 subagent 在分析完成后直接询问用户确认，再把确认结果带回父会话。但这会让审批状态分散在子会话中，增加同步复杂度。
-- 最佳实践是：**subagent 只读/只分析，返回结构化 delta；父 agent 统一负责审批和写入**。这样权限边界清晰，审批流程集中在主会话。
+- subagent 可以拥有 `question.ask` 权限。`sessionTreeRequest` 会把子会话中的 question/permission 请求向下遍历并显示到父会话 composer，用户在父会话中作答后，子会话的 `Deferred` 被 resolve。因此审批状态并不会分散，体验和父 agent 直接提问一致。
+- 对 Design 模式而言，这意味着 GraphAgent 可以在子会话中直接生成 Change Plan、调用 `question.ask` 请求用户审批、并在用户选择 Apply 后继续在子会话内部执行写入，减少跨 Agent 传递 plan 时的理解偏差。
+- 父 agent 仍然是编排层：决定何时调用 subagent，并处理 Reject / Revise 后的后续对话。但审批面板本身由 subagent 驱动即可，无需父 agent 中转。
 
