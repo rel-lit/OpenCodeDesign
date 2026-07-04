@@ -304,6 +304,12 @@ OpenCode 当前已经有两类基于 `DockPrompt` 的实现：
   - 选项支持单选/多选（`multiple`），每个选项包含 `label`（1-5 词）和 `description`（解释）。
   - 支持自定义回答（`custom = true`），用户可以输入自己的文字。
   - 操作：`Dismiss`（关闭/拒绝）、`Back`（上一题）、`Next`/`Submit`（下一题/提交）。
+- **实现细节值得注意**：
+  - 问题文本按**纯文本**渲染（`{question()?.question}`），不支持 Markdown。
+  - 自定义输入是作为一个**选项**嵌入在 `options` 列表里的（radio/checkbox 的最后一项），不是独立输入区。
+  - 支持多问题分步（`questions[]` 数组），有 tab 进度条和缓存未提交答案的逻辑。
+  - 内容区最大高度通过 `measure()` 动态计算，避免遮挡历史消息。
+  - textarea 自动增高通过 `resizeInput()` 实现。
 - **后端语义**：`Question.Service.ask()` 同样创建 `Deferred` 等待；用户提交后 `Question.Service.reply()` 返回 `answers` 数组，每个答案是选中 `label` 的字符串数组。
 
 ### 6.3 面板选择逻辑
@@ -323,11 +329,12 @@ const blocked = createMemo(() => !!permissionRequest() || !!questionRequest())
 ### 6.4 与设计模式相关的结论
 
 - `DockPrompt` 是复用的最佳起点：它已经把 dock 外壳、动画、定位、键盘事件等通用逻辑封装好了，新增一种面板只需要提供 `kind`、`header`、`children`、`footer`。
+- `DockPrompt` 的 `kind` 只影响 `data-slot` 命名前缀，因此可以接受任意字符串（如 `"design-approval"`），无需修改组件本身。
 - 后端已有成熟的阻塞式请求机制：`Question.Service` 和 `Permission.Service` 都使用 `Deferred` + EventV2 事件发布，天然支持“请求-响应”模式。
 - 如果设计模式需要用户确认图变更，**不需要从零写事件协议和面板组件**，可以直接复用其中一种：
   - 若确认内容是“是否允许某操作”，复用 `Permission.Service` + `SessionPermissionDock`。
   - 若确认内容是“从多个选项中选择/自定义回答”，复用 `Question.Service` + `SessionQuestionDock`。
-  - 若内容更复杂（例如显示 diff、支持编辑后再批准），则新增一个 `DockPrompt` 派生组件，但后端仍可复用 `Question.Service` 的 Deferred 阻塞语义。
+  - 若内容更复杂（例如显示 Markdown 格式的 Change Plan、支持编辑后再批准），则新增一个 `DockPrompt` 派生组件，但后端仍可复用 `Question.Service` 的 Deferred 阻塞语义。此时应优先复用 `SessionQuestionDock` 的已有实现片段（`measure()`、`resizeInput()`、`useMutation` 模式），但重新编排 UI，而不是改造通用问题面板。
 
 ---
 
