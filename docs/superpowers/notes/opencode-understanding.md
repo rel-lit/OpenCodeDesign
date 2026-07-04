@@ -483,6 +483,7 @@ export function deriveSubagentSessionPermission(input: {
 派生规则说明：
 
 - 父会话的 `deny` 规则和 `external_directory` 规则会传递给子会话。
+  - 注意：这意味着如果父会话显式 deny 了某个工具（包括 `question`），子会话也会被 deny。但实际配置中，ChatAgent 通常不会显式 deny `question`，因此 GraphAgent 只要自身 permission 允许 `question` 就可以调用。
 - 如果 subagent 自身 permission 没有显式允许 `todowrite`，则默认拒绝所有 `todowrite`。
 - 如果 subagent 自身 permission 没有显式允许 `task`，则默认拒绝所有 `task`（防止子 agent 无限递归创建子 agent）。
 
@@ -492,7 +493,7 @@ export function deriveSubagentSessionPermission(input: {
 - 如果 subagent 未声明 `task` 权限，额外拒绝 `task`。
 - 如果 subagent 未声明 `todowrite` 权限，额外拒绝 `todowrite`。
 
-这意味着 subagent 的工具集由**自身 permission + 父会话拒绝规则 + task 工具默认防御规则**共同决定。
+这意味着 subagent 的工具集由**自身 permission + 父会话的 deny 规则 + task 工具默认防御规则**共同决定。父 Agent 自身没有权限调用的工具，不会自动让子 Agent 获得；但父 Agent 显式 deny 的工具会限制子 Agent。
 
 ### 8.5 Subagent 如何暴露给 LLM
 

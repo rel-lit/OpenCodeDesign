@@ -156,21 +156,23 @@ const designGraphPermissions = Permission.fromConfig({
 - 搜索项目代码、网络资源，完成对比分析。
 - 返回自然语言报告，不直接修改图。
 
-## 活跃工作集：Cache 模型
+## 活跃工作集与临时工作集
 
-活跃工作集是 GraphAgent 分析图时的"工作内存"，类似 CPU Cache。
+### 活跃工作集（Active Working Set）
+
+活跃工作集是系统层维护的共享 Cache，所有 Agent 都能**直接查询**，但只能**间接修改**（通过读图、改图、@引用等行为触发系统层更新）。
 
 ```
-活跃工作集 = LRU Cache
+活跃工作集 = 系统共享 LRU Cache
 - capacity: 20（可配置）
 - line: 一个上下文或节点
 - 命中: 被查询、被修改、被扩展到的节点/上下文
 - prefetch: 激活一个节点时，连带激活其相邻节点和所属上下文
 - 淘汰: 超出容量时，淘汰最近最少使用的
-- 写策略: 无需写回，因为激活状态只影响分析焦点，不改变图本身
+- 写策略: 由系统层自动维护，Agent 不直接写入
 ```
 
-### 触发激活的事件
+#### 触发激活的事件
 
 1. 用户输入中提到 `@节点名` / `@上下文名`。
 2. ChatAgent 向 GraphAgent 请求某个主题的认知。
@@ -179,15 +181,30 @@ const designGraphPermissions = Permission.fromConfig({
 5. Visual Editor 当前选中的节点/上下文。
 6. SearchAgent 返回的差异分析中提到的节点。
 
-### 系统自动控制
+#### Agent 对活跃工作集的使用
 
-- 活跃工作集由系统层维护，不是 ChatAgent 的工具。
 - ChatAgent 不需要知道活跃工作集的内容。
-- GraphAgent 可以看到当前活跃工作集，作为分析的初始 Cache。
-- 用户输入被解析后，其中涉及的概念、@ 引用、关键词会触发对应图节点的调用/激活，导致活跃工作集变化。
+- GraphAgent 可以通过工具查询当前活跃工作集，作为分析的初始 Cache。
+- 活跃工作集是**共享状态**：当 GraphAgent 执行写入后，系统层会立即更新活跃工作集，所有后续 Agent 都能看到最新焦点。
 - 用户可以在 GUI 侧边栏看到活跃工作集，但不需要手动管理；手动调整只作为 Cache 初始状态的补充信号。
 
-## ChatAgent 工具集（重新设计）
+### 临时工作集（Temporary Working Set）
+
+临时工作集是**GraphAgent subagent 会话私有的工作变量**，由 GraphAgent 通过工具控制和查询，不是 prompt 中的死内容。
+
+- 子 Agent 启动时，系统层把当前活跃工作集的快照复制为临时工作集的初始值。
+- GraphAgent 在子会话中通过工具扩展、收缩、查询临时工作集。
+- 临时工作集只存在于子 Agent 生命周期内，子 Agent 终止后丢弃。
+- 它不直接写回活跃工作集；但子 Agent 中的读图/改图行为会间接影响系统层的活跃工作集。
+
+GraphAgent 工具示例：
+
+| 工具名 | 作用 |
+|---|---|
+| `design_workset_get` | 查询当前临时工作集中的节点/上下文 |
+| `design_workset_add(nodes, contexts)` | 把节点/上下文加入临时工作集 |
+| `design_workset_remove(nodes, contexts)` | 从临时工作集移除 |
+| `design_workset_expand(node)` | 把一个节点的相邻节点加入临时工作集 |
 
 ChatAgent 只应该有"向专业 subagent 发请求"的工具，不应该有直接操作图的工具。
 
@@ -228,7 +245,7 @@ interface DesignGraphSubagentInput {
   // ChatAgent 的自然语言请求
   request: string
 
-  // 当前活跃工作集（Cache 快照）
+  // 当前活跃工作集快照（系统共享 Cache 的只读副本）
   activeWorkingSet: {
     contextIds: string[]
     nodeIds: string[]
@@ -295,6 +312,15 @@ interface DesignGraphSubagentOutput {
     plan: ChangePlan        // 已审批通过的变更计划，execute 模式基于此展开细节
   }
 
+  // 当 type 为 change-applied 时，返回已应用变更的摘要，用于同步活跃工作集和 ChatAgent 认知
+  appliedChange?: {
+    version: number
+    affectedNodes: string[]
+    affectedEdges: string[]
+    affectedContexts: string[]
+    summary: string
+  }
+
   // 需要澄清的问题
   questions?: string[]
 }
@@ -303,7 +329,7 @@ interface DesignGraphSubagentOutput {
 输出类型说明：
 
 - `cognition`：返回设计认知。
-- `change-applied`：变更已成功执行（judge 模式内 Apply 后转入 execute 完成）。
+- `change-applied`：变更已成功执行（judge 模式内 Apply 后转入 execute 完成）。`appliedChange` 字段携带变更摘要，系统层据此更新活跃工作集，ChatAgent 据此刷新认知。
 - `rejected`：用户拒绝，子 Agent 已终止。
 - `needs-clarification`：用户要求修订，子 Agent 已终止，附带用户修改意见。
 
@@ -404,6 +430,15 @@ GraphAgent 的工具面向**设计语义**，不是原始图数据操作。底�
 | `design_get_relations(concept_id)` | 获取一个概念的关系 |
 | `design_list_prototypes` | 列出关系原型 |
 
+### 临时工作集工具（子 Agent 私有）
+
+| 工具名 | 用途 |
+|---|---|
+| `design_workset_get` | 查询当前临时工作集中的节点/上下文 |
+| `design_workset_add(nodes, contexts)` | 把节点/上下文加入临时工作集 |
+| `design_workset_remove(nodes, contexts)` | 从临时工作集移除节点/上下文 |
+| `design_workset_expand(node)` | 把一个节点的相邻节点加入临时工作集 |
+
 ### 写工具（语义化）
 
 | 工具名 | 用途 |
@@ -449,31 +484,33 @@ GraphAgent 的工具面向**设计语义**，不是原始图数据操作。底�
 用户："空间维度可以按前后左右来设计吗？"
   → ChatAgent：用户想修改设计
     → ChatAgent 调用 design_request_change("将空间维度按方向有意义的原则划分为前方、侧翼、后方")
-      → 系统层：构建临时工作集
+      → 系统层：构建临时工作集（从活跃工作集快照复制）
         → task({ subagent_type: "design-graph", mode: "judge" })
           → GraphAgent 审批模式分析意图
-            → 生成 Change Plan + 设计理由
-              → 调用 question.ask（事件冒泡到父会话 composer）
-                → 用户在父会话 composer 中选择 Apply / Reject / Revise
-                  → Apply:
-                    → GraphAgent 内部转入 execute 模式
-                      → 基于 plan 展开细节
-                        → 调用语义化写工具
-                          → 累积 delta 片段
-                            → 统一 Design.applyRawDelta(delta)
-                              → bump version
-                                → 返回 change-applied
-                                  → ChatAgent 总结结果
-                  → Reject:
-                    → 终止 subagent
-                      → 返回 rejected + 理由
-                        → ChatAgent 向用户说明变更被拒绝，引导重新讨论
-                          → 直到达成新意图，再次调用 design_request_change
-                  → Revise:
-                    → 终止 subagent
-                      → 返回 needs-clarification + 用户修改意见
-                        → ChatAgent 与用户沟通，重新生成意图
-                          → 再次调用 design_request_change
+            → 通过工具查询/扩展临时工作集
+              → 生成 Change Plan + 设计理由
+                → 调用 question.ask（事件冒泡到父会话 composer）
+                  → 用户在父会话 composer 中选择 Apply / Reject / Revise
+                    → Apply:
+                      → GraphAgent 内部转入 execute 模式
+                        → 基于 plan 展开细节
+                          → 调用语义化写工具
+                            → 累积 delta 片段
+                              → 统一 Design.applyRawDelta(delta)
+                                → bump version
+                                  → 返回 change-applied（携带 appliedChange 摘要）
+                                    → 系统层用 appliedChange 更新活跃工作集
+                                      → ChatAgent 总结结果
+                    → Reject:
+                      → 终止 subagent
+                        → 返回 rejected + 理由
+                          → ChatAgent 向用户说明变更被拒绝，引导重新讨论
+                            → 直到达成新意图，再次调用 design_request_change
+                    → Revise:
+                      → 终止 subagent
+                        → 返回 needs-clarification + 用户修改意见
+                          → ChatAgent 与用户沟通，重新生成意图
+                            → 再次调用 design_request_change
 ```
 
 ### 图摘要请求
@@ -585,12 +622,12 @@ interface DesignSummarizeDesignParameters {}
 ### 审批流程
 
 1. ChatAgent 调用 `design_request_change(intent)`。
-2. 系统层构建临时工作集并注入系统辅助分析。
-3. GraphAgent 以 `judge` 模式分析意图，生成 Change Plan。
+2. 系统层从活跃工作集快照复制初始临时工作集，并注入系统辅助分析。
+3. GraphAgent 以 `judge` 模式分析意图，通过工具查询/扩展临时工作集，生成 Change Plan。
 4. GraphAgent 在子会话中调用 `question.ask`，问题事件冒泡到父会话 composer。
 5. 用户在父会话 composer 中看到审批面板，展示 `proposal.intent`、`proposal.rationale` 和 Change Plan 摘要。
 6. 用户选择：
-   - **Apply**：GraphAgent 在子会话内部转入 `execute` 模式，展开 Change Plan 细节并写入图数据库；成功后 bump 版本并返回 `change-applied`。
+   - **Apply**：GraphAgent 在子会话内部转入 `execute` 模式，展开 Change Plan 细节并写入图数据库；成功后 bump 版本，返回 `change-applied` 并携带 `appliedChange` 摘要。
    - **Reject**：GraphAgent 终止子 Agent，返回 `rejected` 及理由；ChatAgent 据此引导用户重新讨论，直到可以发起下一次审批。
    - **Revise**：GraphAgent 终止子 Agent，返回 `needs-clarification` 及用户的修改意见；ChatAgent 继续与用户沟通，重新生成意图后再次调用 `design_request_change(newIntent)` 发起新一轮审批。
 
@@ -714,7 +751,7 @@ const designChatPermissions = Permission.fromConfig({
 })
 ```
 
-注意：ChatAgent 必须被允许 `task` 以调用 subagent。
+注意：ChatAgent 必须被允许 `task` 以调用 subagent。ChatAgent 不应显式 deny `question`，否则 GraphAgent 子 Agent 的 `question.ask` 会被父会话的 deny 规则继承而失效。
 
 ## 系统层职责
 
@@ -758,7 +795,7 @@ const designChatPermissions = Permission.fromConfig({
 - bump 版本。
 - 更新活跃工作集（根据变更自动激活相关节点）。
 - 清除 Visual Editor 脏标记（如果存在）。
-- 通知 ChatAgent 设计已更新。
+- 通知 ChatAgent 设计已更新（通过子 Agent 返回值中的 `appliedChange` 摘要，或系统事件）。
 
 ### 6. 处理后输入展示
 
@@ -772,8 +809,8 @@ Visual Editor 仍然直接写 DB（raw save），因为 GUI 操作本身已是�
 
 1. 系统层直接写 DB。
 2. 系统层设置**脏标记**（`visual_editor_dirty`），表示设计图自 ChatAgent 上次认知刷新后已被修改。
-3. 在新一轮 ChatAgent 提示词中注入脏标记，提醒 ChatAgent 当前设计认知可能过期。
-4. ChatAgent 调用 `design_ask_graph` 或 `design_summarize_design` 重新建立对图设计的认知。
+3. 如果用户随后提到设计相关内容，ChatAgent 应主动调用 `design_ask_graph` 或 `design_summarize_design` 重新建立对图设计的认知。
+4. 如果用户未主动提及，后续任何 GraphAgent 调用（如 `design_request_change`）都会因脏标记/版本不一致而失败，错误信息会提示 ChatAgent 先同步认知。ChatAgent 同步后脏标记清除，方可继续变更。
 5. GraphAgent 在 `review-save` 或 `summarize` 模式下分析，返回最新设计状态和建议。
 6. ChatAgent 与用户讨论是否需要进一步调整。
 
@@ -814,6 +851,7 @@ Visual Editor 仍然直接写 DB（raw save），因为 GUI 操作本身已是�
 3. 实现 `design_summarize_design`。
 4. 实现 `design_search_project` / `design_search_web`（复用 SearchAgent）。
 5. 在 `ToolRegistry` 中注册新工具。
+6. 实现临时工作集工具（`design_workset_get`、`design_workset_add`、`design_workset_remove`、`design_workset_expand`），供 GraphAgent subagent 在子会话中使用。
 
 ### 阶段 3：重写 design-graph subagent
 
@@ -938,7 +976,7 @@ For execute mode:
 3. Use the semantic design tools to build up the corresponding GraphDelta.
 4. Apply the complete delta through Design.applyRawDelta.
 5. Bump the graph version.
-6. Return a JSON result with type "change-applied".
+6. Return a JSON result with type "change-applied". Include `appliedChange` with the version, affected nodes/edges/contexts, and a human-readable summary so the system layer can synchronize the active working set and ChatAgent can update its cognition.
 
 Your final response must be a single JSON object matching the output schema. Do not wrap it in markdown.
 ```
