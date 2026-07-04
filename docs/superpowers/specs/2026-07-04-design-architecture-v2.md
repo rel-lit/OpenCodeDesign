@@ -705,6 +705,12 @@ const designGraphPermissions = Permission.fromConfig({
   // 引用解析
   design_resolve_reference: "allow",
 
+  // 临时工作集工具（子 Agent 私有）
+  design_workset_get: "allow",
+  design_workset_add: "allow",
+  design_workset_remove: "allow",
+  design_workset_expand: "allow",
+
   // 向用户提问（judge 模式发起审批）
   question: "allow",
 })
