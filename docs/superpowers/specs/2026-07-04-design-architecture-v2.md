@@ -77,8 +77,8 @@ GraphAgent 是同一个 subagent（`design-graph`），但根据调用时的 `mo
   4. 调用 `question.ask` 向用户展示变更计划并请求审批。
   5. 根据用户回答：
      - **Apply**：内部转入 `execute` 模式，展开 Change Plan 细节并写入图数据库，返回 `change-applied`。
-     - **Reject**：返回 `rejected`。
-     - **Revise**：返回 `needs-clarification`，附带用户的修改意见。
+     - **Reject**：终止子 Agent，返回 `rejected` 及理由；ChatAgent 据此引导用户重新讨论，直到可以发起下一次审批。
+     - **Revise**：终止子 Agent，返回 `needs-clarification` 及用户的修改意见；ChatAgent 继续对话澄清意图，然后再次调用 `design_request_change(newIntent)` 发起新一轮审批。
 - **不生成完整 GraphDelta，但审批通过后会负责执行写入。**
 
 #### 3. 执行模式（`execute`）
@@ -457,12 +457,15 @@ GraphAgent 的工具面向**设计语义**，不是原始图数据操作。底�
                                 → 返回 change-applied
                                   → ChatAgent 总结结果
                   → Reject:
-                    → 返回 rejected
-                      → ChatAgent 向用户说明变更被拒绝
+                    → 终止 subagent
+                      → 返回 rejected + 理由
+                        → ChatAgent 向用户说明变更被拒绝，引导重新讨论
+                          → 直到达成新意图，再次调用 design_request_change
                   → Revise:
-                    → 返回 needs-clarification（附带用户修改意见）
-                      → ChatAgent 与用户沟通，重新生成意图
-                        → 再次调用 design_request_change
+                    → 终止 subagent
+                      → 返回 needs-clarification + 用户修改意见
+                        → ChatAgent 与用户沟通，重新生成意图
+                          → 再次调用 design_request_change
 ```
 
 如果 judge 模式因计划不完整等原因未发起 question，则返回 `change-proposal`；ChatAgent 可择机调用 `design_execute_change(plan)` 进入 execute 模式。
@@ -581,8 +584,8 @@ interface DesignSummarizeDesignParameters {}
 4. 用户在父会话 composer 中看到审批面板，展示 `proposal.intent`、`proposal.rationale` 和 Change Plan 摘要。
 5. 用户选择：
    - **Apply**：GraphAgent 在子会话内部转入 `execute` 模式，展开 Change Plan 细节并写入图数据库。
-   - **Reject**：GraphAgent 返回 `rejected`，ChatAgent 向用户说明变更被拒绝。
-   - **Revise**：GraphAgent 返回 `needs-clarification`（附带用户的修改意见），ChatAgent 继续与用户沟通，重新生成意图后再次调用 `design_request_change`。
+   - **Reject**：GraphAgent 终止子 Agent，返回 `rejected` 及理由；ChatAgent 据此引导用户重新讨论，直到可以发起下一次审批。
+   - **Revise**：GraphAgent 终止子 Agent，返回 `needs-clarification` 及用户的修改意见；ChatAgent 继续与用户沟通，重新生成意图后再次调用 `design_request_change(newIntent)` 发起新一轮审批。
 
 ### 为什么由 GraphAgent 直接提问
 
@@ -905,7 +908,7 @@ Your users are:
 
 You work in one of these modes:
 - cognition: Answer a design question by analyzing the graph. Return natural language insights.
-- judge: Convert a natural language design intent into a structured change plan (NOT a full delta). The plan describes core design decisions only. Then call `question.ask` to request user approval. If the user approves, internally transition to execute mode and apply the change. If the user rejects, return `rejected`. If the user wants to revise, return `needs-clarification` with their feedback.
+- judge: Convert a natural language design intent into a structured change plan (NOT a full delta). The plan describes core design decisions only. Then call `question.ask` to request user approval. If the user approves, internally transition to execute mode and apply the change. If the user rejects or wants to revise, terminate the subagent and return the corresponding result to ChatAgent so it can guide the next round.
 - execute: Receive an already-approved change plan. Expand the plan into detailed concept/relationship definitions, then execute them using the semantic design tools.
 - summarize: Generate a natural language summary of the current design based on the active working set.
 - review-save: Review a diff from the Visual Editor and return suggestions.
@@ -920,8 +923,8 @@ For judge mode:
 5. Call `question.ask` to present the Change Plan to the user. The question will surface in the parent session composer automatically.
 6. Wait for the user's answer.
 7. If Apply: internally transition to execute mode, expand the plan, and apply the delta.
-8. If Reject: return a JSON result with type "rejected".
-9. If Revise: return a JSON result with type "needs-clarification" and include the user's revision text in `summary`.
+9. If Reject: terminate the subagent and return a JSON result with type "rejected". Include the rationale in `summary` so ChatAgent can guide the user toward a revised request.
+10. If Revise: terminate the subagent and return a JSON result with type "needs-clarification". Include the user's revision text in `summary`. ChatAgent will continue the conversation and may start a new `design_request_change` round.
 
 For execute mode:
 1. Receive the approved Change Plan.
