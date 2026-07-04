@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>Design 多 Agent 架构图</title>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'default' });
+  </script>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    h2 { margin-top: 3rem; border-bottom: 1px solid #ddd; padding-bottom: .5rem; }
+    .mermaid { background: #f8f9fa; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+    .note { background: #fffbe6; border-left: 4px solid #faad14; padding: .75rem 1rem; margin: 1rem 0; }
+  </style>
+</head>
+<body>
+  <h1>Design 多 Agent 架构图</h1>
+  <p class="note">审批面板是 Design DB 写入的唯一闸门。GraphAgent 是审批后的执行者，不直接面对用户。本架构仅面向 Windows 桌面端 GUI；CLI 与 Web 不在范围内。</p>
+
+  <h2>1. 总体架构</h2>
+  <div class="mermaid">
+flowchart TB
+    U[用户 / GUI]
+    S[系统层]
+    PPI[处理后输入<br/>默认折叠]
+    CA[ChatAgent]
+    GA[GraphAgent]
+    SA[SearchAgent]
+    AP[审批面板]
+    DB[(Design DB)]
+
+    U --> S
+    S --> PPI
+    PPI --> CA
+
+    CA -->|需要图摘要| GA
+    GA -->|基于活跃工作集| CA
+
+    CA -->|"graphSummary + retrievalRequirements"| SA
+    SA -->|总结报告| CA
+    SA -->|差异分析| Plan[Plan / Edit 模式]
+
+    CA -->|"一组 design_* 操作请求"| GA
+    GA -->|变更提案| AP
+    AP -->|拒绝 / 修订| CA
+    AP -->|确认 / 强制| GA
+    GA -->|执行写入| DB
+
+    U -->|可视化编辑器手动保存| DB
+    DB -->|diff| S
+    S -->|临时工作集| GA
+    GA -->|改动分析| CA
+  </div>
+
+  <h2>2. 聊天输入流程</h2>
+  <div class="mermaid">
+flowchart LR
+    U[用户输入]
+    S[系统层]
+    PPI[处理后输入<br/>展示给用户]
+    GA[GraphAgent]
+    CA[ChatAgent]
+
+    U --> S
+    S -->|@ 展开 + 临时工作集 + 阈值| PPI
+    PPI -->|未触发阈值| CA
+    PPI -->|触发阈值| GA
+    GA -->|设计分析 / 消歧 / 图摘要| PPI
+    PPI --> CA
+  </div>
+  <p class="note">处理后输入是最终提交给 ChatAgent 的文本，用户可以看到自己的输入被处理成了什么。</p>
+
+  <h2>3. 图修改流程（ChatAgent 发起）</h2>
+  <div class="mermaid">
+flowchart LR
+    CA[ChatAgent]
+    S[系统层]
+    GA[GraphAgent]
+    AP[审批面板]
+    DB[(Design DB)]
+
+    CA -->|一组图操作请求| S
+    S -->|构建临时工作集| GA
+    GA -->|变更提案 + 警告| AP
+    AP -->|拒绝 / 修订| CA
+    AP -->|确认 / 强制| GA
+    GA -->|执行整组写入| DB
+  </div>
+
+  <h2>4. 可视化编辑器保存流程</h2>
+  <div class="mermaid">
+flowchart LR
+    U[用户]
+    VE[可视化编辑器]
+    DB[(Design DB)]
+    S[系统层]
+    GA[GraphAgent]
+    CA[ChatAgent]
+
+    U -->|修改| VE
+    U -->|手动保存| VE
+    VE -->|raw save| DB
+    DB -->|diff| S
+    S -->|临时工作集| GA
+    GA -->|改动分析| CA
+    CA -->|引导下一轮设计| U
+  </div>
+  <p class="note">手动保存动作本身即视为用户同意。可视化编辑器不实现自动保存。编辑器的修改必须在没有任何 Agent 正在处理问题时进行，保证逻辑同步。</p>
+
+  <h2>5. 检索流程</h2>
+  <div class="mermaid">
+flowchart LR
+    CA[ChatAgent]
+    GA[GraphAgent]
+    SA[SearchAgent]
+    WEB[互联网 / 项目代码]
+
+    CA -->|请求基于活跃工作集的图摘要| GA
+    GA -->|graphSummary| CA
+    CA -->|"{graphSummary, retrievalRequirements}"| SA
+    SA -->|搜索 / 阅读| WEB
+    WEB -->|原始信息| SA
+    SA -->|对比分析 + 总结| CA
+    SA -->|差异分析| Plan[Plan / Edit 模式]
+  </div>
+  <p class="note">SearchAgent 带着当前图摘要和明确检索目的去工作，自行完成参考设计与当前图的对比，不需要 GraphAgent 处理未知工作集。差异分析可交给 Plan 模式用于代码实现。</p>
+</body>
+</html>
