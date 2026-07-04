@@ -15,6 +15,7 @@ import { EffectBridge } from "@/effect/bridge"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Database } from "@opencode-ai/core/database/database"
 import { Design } from "@/design/design"
+import { SessionTrace } from "@/design/system/session-trace"
 
 export interface TaskPromptOps {
   cancel(sessionID: SessionID): Effect.Effect<void>
@@ -90,6 +91,7 @@ export const TaskTool = Tool.define(
     const flags = yield* RuntimeFlags.Service
     const database = yield* Database.Service
     const design = yield* Design.Service
+    const sessionTrace = yield* SessionTrace.Service
 
     const run = Effect.fn("TaskTool.execute")(function* (
       params: Schema.Schema.Type<typeof Parameters>,
@@ -161,6 +163,14 @@ export const TaskTool = Tool.define(
 
       if (next.name === "design-graph") {
         yield* design.resetTemporaryWorkingSet(nextSession.id)
+      }
+
+      if (SessionTrace.shouldTrace(next.name)) {
+        yield* sessionTrace.enable({
+          sessionID: nextSession.id,
+          agent: next.name,
+          parentSessionID: ctx.sessionID,
+        })
       }
 
       const msg = yield* MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID }).pipe(

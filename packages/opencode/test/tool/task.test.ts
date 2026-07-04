@@ -5,6 +5,7 @@ import { Deferred, Effect, Exit, Fiber, Layer } from "effect"
 import { Agent } from "../../src/agent/agent"
 import { BackgroundJob } from "@/background/job"
 import { Design } from "@/design/design"
+import { SessionTrace } from "@/design/system/session-trace"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Config } from "@/config/config"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
@@ -48,6 +49,7 @@ const layer = (flags: Partial<RuntimeFlags.Info> = {}) =>
     SessionStatus.defaultLayer,
     Truncate.defaultLayer,
     ToolRegistry.defaultLayer,
+    SessionTrace.defaultLayer,
     Database.defaultLayer,
     RuntimeFlags.layer(flags),
   ).pipe(Layer.provide(Ripgrep.defaultLayer))

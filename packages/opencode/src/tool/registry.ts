@@ -7,6 +7,7 @@ import {
   GraphAgentDesignTools,
 } from "./design"
 import { Design } from "@/design/design"
+import { SessionTrace } from "@/design/system/session-trace"
 import { Session } from "@/session/session"
 import { QuestionTool } from "./question"
 import { ShellTool } from "./shell"
@@ -354,6 +355,7 @@ export const defaultLayer = Layer.suspend(() =>
       Layer.provide(CrossSpawnSpawner.defaultLayer),
       Layer.provide(Truncate.defaultLayer),
       Layer.provide(Design.defaultLayer),
+      Layer.provide(SessionTrace.defaultLayer),
     )
     .pipe(Layer.provide(Database.defaultLayer), Layer.provide(RuntimeFlags.defaultLayer)),
 )
@@ -458,6 +460,7 @@ export const node = LayerNode.make({
     RuntimeFlags.node,
     Database.node,
     Design.node,
+    SessionTrace.node,
   ],
 })
 
