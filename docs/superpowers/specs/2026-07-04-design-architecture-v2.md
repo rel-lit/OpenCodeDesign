@@ -327,14 +327,14 @@ interface DesignGraphSubagentOutput {
     summary: string
   }
 
-  // 需要澄清的问题
+  // 当 GraphAgent 认为信息不足、需要 ChatAgent 向用户追问时填写
   questions?: string[]
 }
 ```
 
 输出类型说明：
 
-- `cognition`：返回设计认知。
+- `cognition`：返回设计认知。如果 `questions` 非空，ChatAgent 应先回答这些问题或向用户澄清，再继续。
 - `change-applied`：变更已成功执行（judge 模式内 Apply 后转入 execute 完成）。`appliedChange` 字段携带变更摘要，系统层据此更新活跃工作集，ChatAgent 据此刷新认知。
 - `rejected`：用户拒绝，子 Agent 已终止。
 - `needs-clarification`：用户要求修订，子 Agent 已终止，附带用户修改意见。
