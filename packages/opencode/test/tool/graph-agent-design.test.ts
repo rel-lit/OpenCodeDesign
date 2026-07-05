@@ -387,6 +387,15 @@ describe("GraphAgent internal design tools", () => {
     expect(output.type).toBe("change-forced")
   })
 
+  test("output type rejects obsolete needs-clarification", () => {
+    const output = {
+      type: "needs-clarification" as unknown as GraphAgent.Output["type"],
+      summary: "不应被接受",
+    } as GraphAgent.Output
+    expect(output.type).not.toBe("change-applied" as const)
+    expect(output.type).not.toBe("change-forced" as const)
+  })
+
   it.instance("apply and clear queued changes via service", () =>
     Effect.gen(function* () {
       const ctxTool = yield* GraphAgentDesignTools.DesignDefineContextTool

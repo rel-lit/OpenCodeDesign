@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test"
 import { GraphAgent } from "@/design/agent/types"
 
 describe("GraphAgent types", () => {
-  test("input schema accepts judge mode with known version", () => {
+  test("input schema accepts change mode with known version", () => {
     const input: GraphAgent.Input = {
-      mode: "judge",
+      mode: "change",
       request: "rename UserService",
       source: "chat",
       userInput: "rename UserService",
@@ -15,7 +15,7 @@ describe("GraphAgent types", () => {
       knownVersion: 1,
     }
     expect(input.source).toBe("chat")
-    expect(input.mode).toBe("judge")
+    expect(input.mode).toBe("change")
   })
 
   test("minimal GraphDelta omits system node and edge fields", () => {

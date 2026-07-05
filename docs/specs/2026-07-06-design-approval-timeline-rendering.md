@@ -7,8 +7,8 @@
 
 Design 模式的两阶段审批面板（初稿、终稿）在 composer dock 中已经能正常触发和交互。但审批交互结束后，子代理时间线中工具调用结果的渲染不一致：
 
-- **初稿**：GraphAgent `judge` 模式直接调用通用 `question` 工具，时间线显示为「问题 1 已回答」面板，可展开查看完整问题与答案。
-- **终稿**：GraphAgent `refine` 模式调用专用 `design_finalize_change` 工具，时间线显示为通用工具卡片「调用了 design_finalize_change」，问题和答案丢失。
+- **初稿**：GraphAgent `change` 模式阶段 2 直接调用通用 `question` 工具，时间线显示为「问题 1 已回答」面板，可展开查看完整问题与答案。
+- **终稿**：GraphAgent `change` 模式阶段 4 调用专用 `design_finalize_change` 工具，时间线显示为通用工具卡片「调用了 design_finalize_change」，问题和答案丢失。
 
 这种不一致让用户在回顾会话时，无法从时间线直接看到终稿审批的具体内容。
 
@@ -37,7 +37,7 @@ Design 模式的两阶段审批面板（初稿、终稿）在 composer dock 中�
 
 ### 新增 `design_request_approval` 工具
 
-**用途**：替代 GraphAgent judge 模式中对通用 `question` 工具的调用，专门用于初稿审批。
+**用途**：替代 GraphAgent `change` 模式阶段 2 中对通用 `question` 工具的调用，专门用于初稿审批。
 
 **参数**：
 
@@ -183,9 +183,9 @@ const render = createMemo(() => {
 
 `packages/opencode/src/design/agent/prompt/graph.txt`：
 
-- judge 模式工作流中，把「调用 `question.ask`」改为「调用 `design_request_approval`」。
+- change 模式阶段 2 工作流中，把「调用 `question.ask`」改为「调用 `design_request_approval`」。
 - 说明 `design_request_approval` 的参数：`summary`、`warnings`、`has_issues`。
-- refine 模式末尾仍然调用 `design_finalize_change`。
+- change 模式阶段 4 末尾仍然调用 `design_finalize_change`。
 
 ## 需要改动的文件
 
@@ -200,7 +200,8 @@ const render = createMemo(() => {
   - `designGraphPermissions` 增加 `design_request_approval: "allow"`。
 
 - `packages/opencode/src/design/agent/prompt/graph.txt`
-  - judge 模式调用 `design_request_approval` 而非 `question.ask`。
+  - change 模式阶段 2 调用 `design_request_approval` 而非 `question.ask`。
+  - change 模式阶段 4 末尾调用 `design_finalize_change`。
 
 ### 前端
 
@@ -212,7 +213,7 @@ const render = createMemo(() => {
 ### 测试
 
 - `packages/opencode/test/tool/graph-agent-design.test.ts`
-  - 更新 judge 模式测试，验证 `design_request_approval` 存在且参数正确。
+  - 更新 change 模式测试，验证 `design_request_approval` 存在且参数正确。
   - 更新终稿测试，验证 `design_finalize_change` 返回 metadata 包含 questions/answers。
 
 ## 数据流示例
@@ -222,20 +223,20 @@ const render = createMemo(() => {
 ```
 用户：设计一个船战系统
   → ChatAgent 调用 design_request_change
-    → design-graph subagent (judge 模式)
-      → 读图、分析、生成 Change Plan
-        → 调用 design_request_approval({ summary, warnings, has_issues })
+    → design-graph subagent (change 模式)
+      → 阶段 1：读图、分析、生成 Change Plan
+        → 阶段 2：调用 design_request_approval({ summary, warnings, has_issues })
           → Question.Service.ask → dock 显示「设计变更审批」
             → 用户选择 Approve
               → design_request_approval 返回 { result: "approve", metadata: { questions, answers } }
                 → 时间线显示「初稿审批」卡片，展开可见 Q&A
-                  → 进入 refine 模式
+                  → 进入阶段 3 细化
 ```
 
 ### 终稿
 
 ```
-refine 模式末尾
+change 模式阶段 4
   → 调用 design_finalize_change
     → Question.Service.ask → dock 显示「Finalize design changes」
       → 用户选择 Approve
@@ -247,7 +248,7 @@ refine 模式末尾
 ## 关键约束
 
 - 两个审批工具都必须直接调用 `Question.Service.ask`，不能经过 `question` 工具，避免产生重复的 question ToolPart。
-- 通用 `question` 工具保持原样，只用于 refine 细化阶段的具体细节提问。
+- 通用 `question` 工具保持原样，只用于 change 模式阶段 3 的具体细节提问。
 - Dock 面板的识别逻辑基于 question header 或前缀，无需修改。
 - 时间线渲染器只读取 metadata，不改变后端审批逻辑。
 
@@ -255,7 +256,7 @@ refine 模式末尾
 
 1. **单元测试**：验证 `design_request_approval` 和 `design_finalize_change` 返回的 metadata 结构。
 2. **前端渲染测试**：验证 `design_approval` 渲染器对两个工具分别显示「初稿审批」和「终稿审批」。
-3. **集成测试**：完整走一次 judge → refine 流程，确认时间线显示统一。
+3. **集成测试**：完整走一次 change 模式流程，确认时间线显示统一。
 
 ## 决策总结
 

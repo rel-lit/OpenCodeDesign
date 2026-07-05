@@ -77,14 +77,12 @@ export interface ChangePlan {
 }
 
 export interface Input {
-  mode: "cognition" | "judge" | "refine" | "summarize" | "review-save"
+  mode: "cognition" | "change" | "summarize" | "review-save"
   request: string
   source: "chat" | "visual-editor"
   userInput: string
   activeWorkingSet: WorkingSetEntry[]
   knownVersion?: number
-  changePlan?: ChangePlan
-  force?: boolean
   visualEditorDelta?: GraphDelta
 }
 
@@ -96,7 +94,7 @@ export interface Insight {
 }
 
 export interface Output {
-  type: "cognition" | "change-applied" | "change-forced" | "abandoned" | "rejected" | "needs-clarification"
+  type: "cognition" | "change-applied" | "change-forced" | "abandoned" | "rejected"
   summary: string
   insights?: Insight[]
   proposal?: {

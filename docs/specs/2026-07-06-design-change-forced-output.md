@@ -1,11 +1,11 @@
 # Design 子代理输出类型增加 `change-forced`
 
 > 日期：2026-07-06
-> 状态：规范 / 待实现
+> 状态：已并入统一 change mode 规格
 
 ## 背景与问题
 
-Design 模式的两阶段审批中，初稿阶段允许用户在 GraphAgent 发现明显问题时选择 **Force（强行推进）**。按当前规格，Force 与 Approve 都会进入 refine 模式并执行变更，但 GraphAgent 最终返回给 ChatAgent 的类型都是 `"change-applied"`，且 `appliedChange.summary` 不区分是否经历过 Force。
+Design 模式的统一 `change` mode 中，初稿阶段允许用户在 GraphAgent 发现明显问题时选择 **Force（强行推进）**。按原规格，Force 与 Approve 都会进入细化阶段并执行变更，但 GraphAgent 最终返回给 ChatAgent 的类型都是 `"change-applied"`，且 `appliedChange.summary` 不区分是否经历过 Force。
 
 这导致 ChatAgent 无法区分以下两种场景：
 
@@ -23,7 +23,7 @@ Design 模式的两阶段审批中，初稿阶段允许用户在 GraphAgent 发�
 
 ## 核心思路
 
-在 GraphAgent 输出类型中新增 `"change-forced"`，与 `"change-applied"` 共享相同的 `appliedChange` schema。Refine 阶段最终提交成功后：
+在 GraphAgent 输出类型中新增 `"change-forced"`，与 `"change-applied"` 共享相同的 `appliedChange` schema。`change` mode 的终稿阶段提交成功后：
 
 - 如果初稿阶段用户选择 **Approve**，返回 `"change-applied"`。
 - 如果初稿阶段用户选择 **Force**，返回 `"change-forced"`。
@@ -38,7 +38,7 @@ ChatAgent 收到 `"change-forced"` 后，应明确告知用户：变更已应用
 
 ```ts
 export interface Output {
-  type: "cognition" | "change-applied" | "change-forced" | "abandoned" | "rejected" | "needs-clarification"
+  type: "cognition" | "change-applied" | "change-forced" | "abandoned" | "rejected"
   summary: string
   // ... 其他字段不变
   appliedChange?: {
@@ -62,49 +62,16 @@ export interface Output {
 | `"change-forced"` | 初稿 Force，终稿 Approve，变更已应用 | 说明这是强制推进后的结果，强调子代理已自主合理化细节，总结实际应用内容 |
 | `"abandoned"` | 终稿选择废弃 | 说明变更未应用 |
 | `"rejected"` | 初稿选择拒绝 | 说明变更被拒绝 |
-| `"needs-clarification"` | 初稿选择修订 | 转述用户修订意见 |
 
 ## Prompt 更新
 
 ### `packages/opencode/src/design/agent/prompt/graph.txt`
 
-#### 输出 schema
+统一 `change` mode 工作流中说明：
 
-将：
-
-```json
-{
-  "type": "cognition" | "change-applied" | "abandoned" | "rejected" | "needs-clarification",
-  ...
-}
-```
-
-改为：
-
-```json
-{
-  "type": "cognition" | "change-applied" | "change-forced" | "abandoned" | "rejected" | "needs-clarification",
-  ...
-}
-```
-
-#### Judge 模式工作流
-
-第 7 步和第 8 步已明确说明 Approve / Force 都会进入 refine 模式，补充说明最终返回类型：
-
-- 如果选择 **Approve**：内部切换到 refine 模式，最终成功后返回 `"change-applied"`。
-- 如果选择 **Force**：内部切换到 refine 模式并设置 `force=true`，最终成功后返回 `"change-forced"`。
-
-#### Refine 模式工作流
-
-第 6 步改为：
-
-- 如果初稿阶段用户选择 **Approve**：返回类型为 `"change-applied"`。
-- 如果初稿阶段用户选择 **Force**：返回类型为 `"change-forced"`。
-- 如果用户在终稿阶段选择 **Abandon**：返回类型为 `"abandoned"`。
-- 如果用户在终稿阶段选择 **Revise**：继续细化。
-
-在 refine 阶段生成的 `appliedChange.summary` 中，Force 场景应简要说明哪些原始内容被过滤或调整，以及原因。
+- 终稿 Approve 后，若初稿阶段为 Approve，返回 `"change-applied"`。
+- 终稿 Approve 后，若初稿阶段为 Force，返回 `"change-forced"`。
+- 在 `appliedChange.summary` 中，Force 场景应简要说明哪些原始内容被过滤或调整，以及原因。
 
 ### `packages/opencode/src/agent/prompt/design.txt`
 
@@ -114,7 +81,7 @@ export interface Output {
 - 如果类型为 "change-applied"，总结变更内容并询问接下来要完善什么。
 - 如果类型为 "change-forced"，说明变更已在用户强制推进下应用；子代理已自主合理化细节。总结实际应用的变更，指出与原始意图的差异（例如过滤了哪些内容），并询问用户是否接受这些调整。
 - 如果类型为 "rejected"，说明变更被拒绝，并邀请用户修改请求。
-- 如果类型为 "needs-clarification"，说明用户的修改请求并继续讨论。
+- 如果类型为 "abandoned"，说明用户在终稿阶段放弃了变更，并邀请用户重新发起请求。
 - 如果类型为 "cognition"，使用这些洞察来支撑你的回复。
 ```
 
@@ -125,14 +92,14 @@ export interface Output {
 ```
 用户：让资源点也能升级科技树
   → ChatAgent 调用 design_request_change
-    → design-graph subagent (judge 模式)
-      → 读图、分析、发现「资源点→升级→科技树」语义矛盾
-        → 调用 design_request_approval({ summary, warnings, has_issues: true })
+    → design-graph subagent (change 模式)
+      → 阶段 1：读图、分析、发现「资源点→升级→科技树」语义矛盾
+        → 阶段 2：design_request_approval({ summary, warnings, has_issues: true })
           → dock 显示 Approve/Force/Revise/Reject，其中 Approve 不可选
             → 用户选择 Force
-              → 进入 refine 模式，force=true
-                → GraphAgent 自主决定：保留「资源点→产出→资源」、新增「资源→升级→建筑」、过滤掉矛盾的科技树边
-                  → design_finalize_change
+              → 阶段 3：细化，force=true，GraphAgent 自主决定所有细节
+                → 保留「资源点→产出→资源」、新增「资源→升级→建筑」、过滤掉矛盾的科技树边
+                  → 阶段 4：design_finalize_change
                     → 用户选择 Approve
                       → 返回 { "type": "change-forced", appliedChange: { ... } }
                         → ChatAgent 看到 "change-forced"
@@ -152,8 +119,7 @@ export interface Output {
 
 - `packages/opencode/src/design/agent/prompt/graph.txt`
   - 输出 schema 增加 `"change-forced"`。
-  - Judge 模式说明 Approve / Force 对应的最终返回类型。
-  - Refine 模式说明最终返回 `"change-applied"` 或 `"change-forced"` 的规则。
+  - 统一 `change` mode 工作流说明 Approve / Force 对应的最终返回类型。
 
 ### ChatAgent Prompt
 
@@ -172,6 +138,10 @@ export interface Output {
 - 不改动通用 `question` 工具。
 - `change-forced` 与 `change-applied` 共享 `appliedChange` schema，避免前端和后端类型复杂化。
 - GraphAgent 在当前架构下通过读取 `design_request_approval` 的返回结果判断是 Approve 还是 Force；无需额外传递 `force` 变量。
+
+## 相关文档
+
+- `docs/specs/2026-07-06-design-unified-change-mode.md`：统一 `change` mode 的完整规格，包含本类型所在的流程上下文。
 
 ## 测试策略
 

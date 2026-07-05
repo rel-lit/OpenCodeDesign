@@ -86,7 +86,7 @@ export const DesignRequestChangeTool = Tool.define(
               metadata: { syncRequired: true } as Record<string, unknown>,
             }
           }
-          const graphPrompt = yield* buildGraphAgentPrompt({ design, mode: "judge", request: args.intent, ctx })
+          const graphPrompt = yield* buildGraphAgentPrompt({ design, mode: "change", request: args.intent, ctx })
           const result = yield* task.execute(
             {
               description: truncatePreview(args.intent, MAX_INTENT_PREVIEW_LENGTH),
@@ -224,7 +224,7 @@ export const DesignSearchWebTool = Tool.define(
 
 function buildGraphAgentPrompt(input: {
   design: Design.Interface
-  mode: "cognition" | "judge" | "summarize" | "review-save" | "refine"
+  mode: "cognition" | "change" | "summarize" | "review-save"
   request: string
   ctx: Tool.Context
 }): Effect.Effect<string> {
