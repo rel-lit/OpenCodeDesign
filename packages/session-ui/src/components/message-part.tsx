@@ -464,8 +464,7 @@ export function getToolInfo(
     case "design_summarize_design":
     case "design_search_project":
     case "design_search_web": {
-      const subagentType =
-        tool === "design_search_project" || tool === "design_search_web" ? "design-search" : "design-graph"
+      const subagentType = designSubagentType(tool)
       return {
         icon: "task",
         title: designSubagentTitle(i18n, subagentType),
@@ -479,6 +478,35 @@ export function getToolInfo(
         title: tool,
       }
   }
+}
+
+function designSubagentType(tool: string) {
+  if (tool === "design_search_project" || tool === "design_search_web") return "design-search"
+  return "design-graph"
+}
+
+function designSubagentTitle(i18n: UiI18n, subagentType: string) {
+  if (subagentType === "design-graph") return i18n.t("ui.tool.designGraph")
+  if (subagentType === "design-search") return i18n.t("ui.tool.designSearch")
+  return agentTitle(i18n, subagentType)
+}
+
+function designSubagentSubtitle(input: Record<string, any>) {
+  const raw = input.question ?? input.intent ?? input.query ?? ""
+  const max = 80
+  if (typeof raw !== "string") return ""
+  if (raw.length <= max) return raw
+  return raw.slice(0, max).replace(/\s+\S*$/, "") + "…"
+}
+
+function isDesignSubagentTool(tool: string) {
+  return [
+    "design_ask_graph",
+    "design_request_change",
+    "design_summarize_design",
+    "design_search_project",
+    "design_search_web",
+  ].includes(tool)
 }
 
 function designInternalToolInfo(i18n: UiI18n, tool: string, input: Record<string, any>): ToolInfo {
@@ -1463,23 +1491,42 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
   const input = () => part().state?.input ?? emptyInput
   // @ts-expect-error
   const partMetadata = () => part().state?.metadata ?? emptyMetadata
+
+  const taskLikeInput = createMemo(() => {
+    if (!isDesignSubagentTool(part().tool)) return input()
+    return {
+      ...input(),
+      subagent_type: designSubagentType(part().tool),
+      description: designSubagentSubtitle(input()),
+    }
+  })
+
   const taskId = createMemo(() => {
-    if (part().tool !== "task") return
+    if (part().tool !== "task" && !isDesignSubagentTool(part().tool)) return
     const value = partMetadata().sessionId
     if (typeof value === "string" && value) return value
   })
   const taskHref = createMemo(() => {
-    if (part().tool !== "task") return
+    if (part().tool !== "task" && !isDesignSubagentTool(part().tool)) return
     return sessionLink(taskId(), useLocation().pathname, data.sessionHref)
   })
   const taskSubtitle = createMemo(() => {
-    if (part().tool !== "task") return undefined
+    if (part().tool !== "task" && !isDesignSubagentTool(part().tool)) return undefined
     const value = input().description
     if (typeof value === "string" && value) return value
     return taskId()
   })
 
-  const render = createMemo(() => ToolRegistry.render(part().tool) ?? GenericTool)
+  const render = createMemo(() => {
+    const registered = ToolRegistry.render(part().tool)
+    if (registered) return registered
+    if (isDesignSubagentTool(part().tool)) return ToolRegistry.render("task")
+    return GenericTool
+  })
+  const renderedInput = createMemo(() => {
+    if (isDesignSubagentTool(part().tool)) return taskLikeInput()
+    return input()
+  })
   const controlledOpen = () => (props.onToolOpenChange ? (props.toolOpen ?? props.defaultOpen) : undefined)
   const handleToolOpenChange = (open: boolean) => props.onToolOpenChange?.(open)
 
@@ -1516,8 +1563,8 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
           <Match when={true}>
             <Dynamic
               component={render()}
-              input={input()}
-              tool={part().tool}
+              input={renderedInput()}
+              tool={isDesignSubagentTool(part().tool) ? "task" : part().tool}
               sessionID={part().sessionID}
               metadata={partMetadata()}
               // @ts-expect-error
@@ -1956,106 +2003,6 @@ ToolRegistry.register({
     )
   },
 })
-
-function designSubagentTitle(i18n: UiI18n, subagentType: string) {
-  if (subagentType === "design-graph") return i18n.t("ui.tool.designGraph")
-  if (subagentType === "design-search") return i18n.t("ui.tool.designSearch")
-  return agentTitle(i18n, subagentType)
-}
-
-function designSubagentSubtitle(input: Record<string, any>) {
-  const raw = input.question ?? input.intent ?? input.query ?? ""
-  const max = 80
-  if (typeof raw !== "string") return ""
-  if (raw.length <= max) return raw
-  return raw.slice(0, max).replace(/\s+\S*$/, "") + "…"
-}
-
-function DesignSubagentCard(props: ToolProps) {
-  const data = useData()
-  const i18n = useI18n()
-  const location = useLocation()
-  const childSessionId = createMemo(() => {
-    const value = props.metadata.sessionId
-    if (typeof value === "string" && value) return value
-  })
-  const subagentType = createMemo(() => {
-    const value = props.metadata.subagent_type
-    if (typeof value === "string" && value) return value
-    return props.input.subagent_type
-  })
-  const title = createMemo(() => designSubagentTitle(i18n, subagentType()))
-  const subtitle = createMemo(() => designSubagentSubtitle(props.input))
-  const running = createMemo(() => props.status === "pending" || props.status === "running")
-  const href = createMemo(() => sessionLink(childSessionId(), location.pathname, data.sessionHref))
-  const clickable = createMemo(() => !!(childSessionId() && (data.navigateToSession || href())))
-
-  const open = () => {
-    const id = childSessionId()
-    if (!id) return
-    if (data.navigateToSession) {
-      data.navigateToSession(id)
-      return
-    }
-    const value = href()
-    if (value) window.location.assign(value)
-  }
-
-  const navigate = (event: MouseEvent) => {
-    if (!data.navigateToSession) return
-    if (event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
-    event.preventDefault()
-    open()
-  }
-
-  const trigger = () => (
-    <div data-component="task-tool-card">
-      <div data-slot="basic-tool-tool-info-structured">
-        <div data-slot="basic-tool-tool-info-main">
-          <Icon name="task" size="small" />
-          <Show when={running()}>
-            <span data-component="task-tool-spinner" style={{ color: "var(--icon-interactive-base)" }}>
-              <Spinner />
-            </span>
-          </Show>
-          <span data-component="task-tool-title" style={{ color: "var(--text-strong)" }}>
-            {title()}
-          </span>
-          <Show when={subtitle()}>
-            <span data-slot="basic-tool-tool-subtitle">{subtitle()}</span>
-          </Show>
-        </div>
-      </div>
-      <Show when={clickable()}>
-        <div data-component="task-tool-action">
-          <Icon name="square-arrow-top-right" size="small" />
-        </div>
-      </Show>
-    </div>
-  )
-
-  return (
-    <BasicTool
-      icon="task"
-      status={props.status}
-      trigger={trigger()}
-      hideDetails
-      triggerHref={href()}
-      clickable={clickable()}
-      onTriggerClick={navigate}
-    />
-  )
-}
-
-for (const name of [
-  "design_ask_graph",
-  "design_request_change",
-  "design_summarize_design",
-  "design_search_project",
-  "design_search_web",
-]) {
-  ToolRegistry.register({ name, render: DesignSubagentCard })
-}
 
 ToolRegistry.register({
   name: "bash",
