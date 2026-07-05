@@ -232,22 +232,101 @@ function buildGraphAgentPrompt(input: {
     const graphState = yield* input.design.getState()
     const version = yield* input.design.getCurrentVersion()
     const temporaryWorkingSet = yield* input.design.getTemporaryWorkingSet(input.ctx.sessionID)
+
+    const contextName = (id: string) =>
+      Effect.gen(function* () {
+        const ctx = yield* input.design.findContextByNameOrId(id)
+        return ctx?.name ?? id
+      })
+
+    const nodeName = (id: string) =>
+      Effect.gen(function* () {
+        const node = yield* input.design.findNodeByNameOrId(id)
+        return node?.name ?? id
+      })
+
+    const prototypeName = (id: string) =>
+      Effect.gen(function* () {
+        const proto = yield* input.design.getPrototype(id)
+        return proto?.name ?? id
+      })
+
+    const namedActiveContexts = yield* Effect.all(activeWs.contextIds.map(contextName))
+    const namedActiveNodes = yield* Effect.all(activeWs.nodeIds.map(nodeName))
+    const namedTemporaryContexts = yield* Effect.all(temporaryWorkingSet.contextIds.map(contextName))
+    const namedTemporaryNodes = yield* Effect.all(temporaryWorkingSet.nodeIds.map(nodeName))
+
+    const contexts = yield* Effect.all(
+      graphState.contexts.map((ctx) =>
+        Effect.gen(function* () {
+          const nodeNames = yield* Effect.all(ctx.nodeIds.map(nodeName))
+          return {
+            ...ctx,
+            nodeIds: ctx.nodeIds.map((id, i) => `${nodeNames[i]} (${id})`),
+          }
+        }),
+      ),
+    )
+
+    const nodes = yield* Effect.all(
+      graphState.nodes.map((node) =>
+        Effect.gen(function* () {
+          const ctx = yield* contextName(node.contextId)
+          return {
+            ...node,
+            contextId: `${ctx} (${node.contextId})`,
+          }
+        }),
+      ),
+    )
+
+    const edges = yield* Effect.all(
+      graphState.edges.map((edge) =>
+        Effect.gen(function* () {
+          const [left, right, proto] = yield* Effect.all([
+            nodeName(edge.leftNodeId),
+            nodeName(edge.rightNodeId),
+            prototypeName(edge.prototypeId),
+          ])
+          return {
+            ...edge,
+            leftNodeId: `${left} (${edge.leftNodeId})`,
+            rightNodeId: `${right} (${edge.rightNodeId})`,
+            prototypeId: `${proto} (${edge.prototypeId})`,
+          }
+        }),
+      ),
+    )
+
+    const prototypes = yield* Effect.all(
+      graphState.prototypes.map((proto) =>
+        Effect.succeed({
+          ...proto,
+          id: `${proto.name} (${proto.id})`,
+        }),
+      ),
+    )
+
     return JSON.stringify({
       mode: input.mode,
       request: input.request,
       source: "chat" as const,
       userInput: input.request,
       activeWorkingSet: {
-        contextIds: activeWs.contextIds,
-        nodeIds: activeWs.nodeIds,
+        contextIds: activeWs.contextIds.map((id, i) => `${namedActiveContexts[i]} (${id})`),
+        nodeIds: activeWs.nodeIds.map((id, i) => `${namedActiveNodes[i]} (${id})`),
         capacity: graphState.workingSet?.capacity ?? 20,
       },
-      temporaryWorkingSet,
+      temporaryWorkingSet: {
+        ...temporaryWorkingSet,
+        contextIds: temporaryWorkingSet.contextIds.map((id, i) => `${namedTemporaryContexts[i]} (${id})`),
+        nodeIds: temporaryWorkingSet.nodeIds.map((id, i) => `${namedTemporaryNodes[i]} (${id})`),
+      },
       graphState: {
-        contexts: graphState.contexts,
-        nodes: graphState.nodes,
-        edges: graphState.edges,
-        prototypes: graphState.prototypes,
+        contexts,
+        nodes,
+        edges,
+        prototypes,
       },
       knownVersion: version.sequence,
     })

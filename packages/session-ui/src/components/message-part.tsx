@@ -468,7 +468,7 @@ export function getToolInfo(
       return {
         icon: "task",
         title: designSubagentTitle(i18n, subagentType),
-        subtitle: designSubagentSubtitle(input),
+        subtitle: designSubagentSubtitle(i18n, tool),
       }
     }
     default:
@@ -491,12 +491,11 @@ function designSubagentTitle(i18n: UiI18n, subagentType: string) {
   return agentTitle(i18n, subagentType)
 }
 
-function designSubagentSubtitle(input: Record<string, any>) {
-  const raw = input.question ?? input.intent ?? input.query ?? ""
-  const max = 80
-  if (typeof raw !== "string") return ""
-  if (raw.length <= max) return raw
-  return raw.slice(0, max).replace(/\s+\S*$/, "") + "…"
+function designSubagentSubtitle(i18n: UiI18n, tool: string) {
+  const subagentType = designSubagentType(tool)
+  if (subagentType === "design-graph") return i18n.t("ui.tool.designGraph.description")
+  if (subagentType === "design-search") return i18n.t("ui.tool.designSearch.description")
+  return ""
 }
 
 function isDesignSubagentTool(tool: string) {
@@ -1499,7 +1498,7 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
     return {
       ...rest,
       subagent_type: designSubagentType(part().tool),
-      description: designSubagentSubtitle(input()),
+      description: designSubagentSubtitle(i18n, part().tool),
     }
   })
 

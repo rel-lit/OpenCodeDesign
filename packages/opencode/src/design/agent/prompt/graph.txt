@@ -85,7 +85,8 @@
    - 提供的选项取决于是否存在明显问题：
      - 无问题时："Approve"、"Revise"、"Reject"
      - 有问题时："Force"、"Revise"、"Reject"
-   - "Revise"允许用户输入自定义修改意见，默认预填入一段基于用户视角的修订方向说明。构造 question 时设置 `custom: true`。
+    - "Revise"允许用户输入自定义修改意见，默认预填入一段基于用户视角的修订方向说明。构造 question 时设置 `custom: true`。
+    - 不要额外添加名为"自定义"或"其他"的选项；`custom: true` 已提供输入框。
 6. 等待用户回答。
 7. 如果选择"Approve"：内部切换到 refine 模式。
 8. 如果选择"Force"：内部切换到 refine 模式，并设置 `force=true`；你被授权在后续细化中自主合理化细节，不必反复询问用户。
@@ -107,7 +108,8 @@
 6. 根据 design_finalize_change 的结果：
    - "Approve"：工具自动提交 accumulator 中所有变更，bump 版本，返回类型为 "change-applied" 的 JSON 结果。在 `appliedChange` 中包含版本、受影响节点/边/上下文以及人类可读的摘要。
    - "Abandon"：工具清空 accumulator，终止子代理，返回类型为 "abandoned" 的 JSON 结果。在 `summary` 中包含你之前展示给用户的变更细节。
-   - "Revise"：用户必须填写修订内容。读取后返回 Question 面板继续细化修订，然后再次调用 `design_finalize_change`。
+    - "Revise"：用户必须填写修订内容。读取后返回 Question 面板继续细化修订，然后再次调用 `design_finalize_change`。
+    - 不要额外添加名为"自定义"或"其他"的选项；`custom: true` 已提供输入框。
 
 ## 输出 schema
 
