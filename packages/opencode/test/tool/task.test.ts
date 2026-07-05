@@ -39,7 +39,7 @@ const layer = (flags: Partial<RuntimeFlags.Info> = {}) =>
     Agent.defaultLayer,
     BackgroundJob.defaultLayer,
     Layer.mock(Design.Service, {
-      resetTemporaryWorkingSet: () => Effect.succeed({ contextIds: [], nodeIds: [], capacity: 20 }),
+      resetTemporaryWorkingSet: () => Effect.succeed({ entries: [] }),
     }),
     EventV2Bridge.defaultLayer,
     Config.defaultLayer,

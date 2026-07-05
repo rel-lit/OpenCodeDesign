@@ -47,9 +47,27 @@ export const BoundedContext = Schema.Struct({
 })
 export type BoundedContext = Schema.Schema.Type<typeof BoundedContext>
 
+export const WorkingSetNodeEntry = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  type: Schema.Literal("node"),
+  briefSemantics: Schema.String,
+})
+export type WorkingSetNodeEntry = Schema.Schema.Type<typeof WorkingSetNodeEntry>
+
+export const WorkingSetContextEntry = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  type: Schema.Literal("context"),
+  briefSemantics: Schema.String,
+})
+export type WorkingSetContextEntry = Schema.Schema.Type<typeof WorkingSetContextEntry>
+
+export const WorkingSetEntry = Schema.Union([WorkingSetNodeEntry, WorkingSetContextEntry])
+export type WorkingSetEntry = Schema.Schema.Type<typeof WorkingSetEntry>
+
 export const WorkingSet = Schema.Struct({
-  activeContextIds: Schema.Array(Schema.String),
-  activeNodeIds: Schema.Array(Schema.String),
+  entries: Schema.Array(WorkingSetEntry),
   capacity: Schema.Number,
 })
 export type WorkingSet = Schema.Schema.Type<typeof WorkingSet>

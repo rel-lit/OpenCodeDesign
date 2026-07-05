@@ -74,7 +74,7 @@ export const makeEngine = Effect.fn("GraphEngine.make")(function* () {
     edges: [],
     prototypes: [],
     contexts: [],
-    workingSet: { activeContextIds: [], activeNodeIds: [], capacity: 20 },
+    workingSet: { entries: [], capacity: 20 },
     eventLog: { events: [] },
   }
 

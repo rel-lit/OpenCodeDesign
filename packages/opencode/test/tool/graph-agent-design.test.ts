@@ -3,14 +3,7 @@ import { Effect, Fiber, Layer, Queue } from "effect"
 import { testEffect } from "../lib/effect"
 import { Design } from "../../src/design/design"
 import { GraphAgentDesignTools } from "../../src/tool/design"
-import {
-  DesignFindConceptsTool,
-  DesignGetContextTool,
-  DesignGetConceptTool,
-  DesignGetRelationsTool,
-  DesignListPrototypesTool,
-  DesignResolveReferenceTool,
-} from "../../src/tool/design"
+import { DesignGetContextTool, DesignGetConceptTool, DesignListPrototypesTool } from "../../src/tool/design"
 import { DesignStore } from "../../src/design/store/store"
 import { Tool } from "@/tool/tool"
 import { Agent } from "../../src/agent/agent"
@@ -76,7 +69,7 @@ describe("GraphAgent internal design tools", () => {
       const design = yield* Design.Service
       const ctxTool = yield* GraphAgentDesignTools.DesignDefineContextTool
       const nodeTool = yield* GraphAgentDesignTools.DesignDefineConceptTool
-      const findTool = yield* DesignFindConceptsTool
+      const searchTool = yield* GraphAgentDesignTools.DesignSearchGraphTool
       const ctx = makeCtx()
 
       const ctxResult = yield* (yield* Tool.init(ctxTool)).execute({ name: "战斗系统" }, ctx)
@@ -85,30 +78,53 @@ describe("GraphAgent internal design tools", () => {
       const nodeResult = yield* (yield* Tool.init(nodeTool)).execute({ name: "船", context: contextId }, ctx)
       expect(nodeResult.output).toContain("船")
 
-      const findResult = yield* (yield* Tool.init(findTool)).execute({ query: "船" }, ctx)
-      expect(findResult.metadata.count).toBe(1)
+      const searchResult = yield* (yield* Tool.init(searchTool)).execute({ query: "船" }, ctx)
+      expect(searchResult.metadata.matchCount).toBe(1)
     }).pipe(Effect.provide(provideDesign)),
   )
 
-  it.instance("relate_concepts links two concepts", () =>
+  it.instance("search_graph adds matches to temporary working set", () =>
     Effect.gen(function* () {
-      const resolveTool = yield* DesignResolveReferenceTool
-      const relateTool = yield* GraphAgentDesignTools.DesignRelateConceptsTool
+      const design = yield* Design.Service
+      const ctxTool = yield* GraphAgentDesignTools.DesignDefineContextTool
+      const nodeTool = yield* GraphAgentDesignTools.DesignDefineConceptTool
+      const searchTool = yield* GraphAgentDesignTools.DesignSearchGraphTool
+      const twsTool = yield* GraphAgentDesignTools.DesignGetTemporaryWorkingSetTool
       const ctx = makeCtx()
 
-      const ship = yield* (yield* Tool.init(resolveTool)).execute({ query: "船" }, ctx)
-      const hp = yield* (yield* Tool.init(resolveTool)).execute({ query: "生命值" }, ctx)
+      const c = yield* (yield* Tool.init(ctxTool)).execute({ name: "系统" }, ctx)
+      const contextId = c.metadata.contextId as string
+      yield* (yield* Tool.init(nodeTool)).execute({ name: "船", context: contextId }, ctx)
 
-      const edgeResult = yield* (yield* Tool.init(relateTool)).execute(
-        {
-          from: ship.metadata.nodeId as string,
-          to: hp.metadata.nodeId as string,
-          relation: "aggregate",
-          constraints: { 上限: 1000 },
-        },
-        ctx,
-      )
-      expect(edgeResult.output).toContain("aggregate")
+      yield* (yield* Tool.init(searchTool)).execute({ query: "船" }, ctx)
+      const tws = yield* (yield* Tool.init(twsTool)).execute({}, ctx)
+      expect(tws.output).toContain("船")
+    }).pipe(Effect.provide(provideDesign)),
+  )
+
+  it.instance("expand_node returns neighbors and updates working set", () =>
+    Effect.gen(function* () {
+      const design = yield* Design.Service
+      const ctxTool = yield* GraphAgentDesignTools.DesignDefineContextTool
+      const nodeTool = yield* GraphAgentDesignTools.DesignDefineConceptTool
+      const protoTool = yield* GraphAgentDesignTools.DesignDefineRelationPrototypeTool
+      const relateTool = yield* GraphAgentDesignTools.DesignRelateConceptsTool
+      const expandTool = yield* GraphAgentDesignTools.DesignExpandNodeTool
+      const twsTool = yield* GraphAgentDesignTools.DesignGetTemporaryWorkingSetTool
+      const ctx = makeCtx()
+
+      const c = yield* (yield* Tool.init(ctxTool)).execute({ name: "系统" }, ctx)
+      const contextId = c.metadata.contextId as string
+      yield* (yield* Tool.init(nodeTool)).execute({ name: "船", context: contextId }, ctx)
+      yield* (yield* Tool.init(nodeTool)).execute({ name: "海", context: contextId }, ctx)
+      yield* (yield* Tool.init(protoTool)).execute({ name: "关联" }, ctx)
+      yield* (yield* Tool.init(relateTool)).execute({ from: "船", to: "海", relation: "关联" }, ctx)
+
+      const expandResult = yield* (yield* Tool.init(expandTool)).execute({ name_or_id: "船" }, ctx)
+      expect(expandResult.output).toContain("海")
+
+      const tws = yield* (yield* Tool.init(twsTool)).execute({}, ctx)
+      expect(tws.output).toContain("海")
     }).pipe(Effect.provide(provideDesign)),
   )
 
@@ -135,7 +151,7 @@ describe("GraphAgent internal design tools", () => {
       const getTool = yield* DesignGetConceptTool
       const updateTool = yield* GraphAgentDesignTools.DesignRefineConceptTool
       const deleteTool = yield* GraphAgentDesignTools.DesignWithdrawConceptTool
-      const findTool = yield* DesignFindConceptsTool
+      const searchTool = yield* GraphAgentDesignTools.DesignSearchGraphTool
       const ctx = makeCtx()
 
       const c = yield* (yield* Tool.init(ctxTool)).execute({ name: "系统" }, ctx)
@@ -159,8 +175,8 @@ describe("GraphAgent internal design tools", () => {
       const getAfterUpdate = yield* (yield* Tool.init(getTool)).execute({ name_or_id: nodeId }, ctx)
       expect(getAfterUpdate.output).toContain("玩家载具")
 
-      const findResult = yield* (yield* Tool.init(findTool)).execute({ query: "飞船" }, ctx)
-      expect(findResult.metadata.count).toBe(1)
+      const searchResult = yield* (yield* Tool.init(searchTool)).execute({ query: "飞船" }, ctx)
+      expect(searchResult.metadata.matchCount).toBe(1)
 
       yield* (yield* Tool.init(deleteTool)).execute({ concept: nodeId, cascade: true }, ctx)
       const getAfterDelete = yield* (yield* Tool.init(getTool)).execute({ name_or_id: nodeId }, ctx)
@@ -170,31 +186,35 @@ describe("GraphAgent internal design tools", () => {
 
   it.instance("relation update and delete", () =>
     Effect.gen(function* () {
-      const resolveTool = yield* DesignResolveReferenceTool
+      const ctxTool = yield* GraphAgentDesignTools.DesignDefineContextTool
+      const nodeTool = yield* GraphAgentDesignTools.DesignDefineConceptTool
+      const protoTool = yield* GraphAgentDesignTools.DesignDefineRelationPrototypeTool
       const relateTool = yield* GraphAgentDesignTools.DesignRelateConceptsTool
       const deleteTool = yield* GraphAgentDesignTools.DesignWithdrawRelationTool
-      const listTool = yield* DesignGetRelationsTool
+      const getTool = yield* DesignGetConceptTool
       const ctx = makeCtx()
 
-      const ship = yield* (yield* Tool.init(resolveTool)).execute({ query: "船" }, ctx)
-      const hp = yield* (yield* Tool.init(resolveTool)).execute({ query: "生命值" }, ctx)
-      const from = ship.metadata.nodeId as string
-      const to = hp.metadata.nodeId as string
+      const c = yield* (yield* Tool.init(ctxTool)).execute({ name: "系统" }, ctx)
+      const contextId = c.metadata.contextId as string
+      yield* (yield* Tool.init(nodeTool)).execute({ name: "船", context: contextId }, ctx)
+      yield* (yield* Tool.init(nodeTool)).execute({ name: "生命值", context: contextId }, ctx)
+      yield* (yield* Tool.init(protoTool)).execute({ name: "aggregate" }, ctx)
 
       yield* (yield* Tool.init(relateTool)).execute(
-        { from, to, relation: "aggregate" },
+        { from: "船", to: "生命值", relation: "aggregate" },
         ctx,
       )
 
       const updateResult = yield* (yield* Tool.init(relateTool)).execute(
-        { from, to, relation: "aggregate", constraints: { max: 100 } },
+        { from: "船", to: "生命值", relation: "aggregate", constraints: { max: 100 } },
         ctx,
       )
       expect(updateResult.output).toContain("aggregate")
 
-      yield* (yield* Tool.init(deleteTool)).execute({ from, to }, ctx)
-      const listResult = yield* (yield* Tool.init(listTool)).execute({ concept_id: from }, ctx)
-      expect(listResult.metadata.count).toBe(0)
+      yield* (yield* Tool.init(deleteTool)).execute({ from: "船", to: "生命值" }, ctx)
+      const getResult = yield* (yield* Tool.init(getTool)).execute({ name_or_id: "船" }, ctx)
+      expect(getResult.output).toContain("Relations:")
+      expect(getResult.output).not.toContain("生命值")
     }).pipe(Effect.provide(provideDesign)),
   )
 
@@ -212,37 +232,25 @@ describe("GraphAgent internal design tools", () => {
 
       const listResult = yield* (yield* Tool.init(listTool)).execute({}, ctx)
       expect(listResult.output).toContain("组合")
-      expect(listResult.output).toContain(prototypeId)
     }).pipe(Effect.provide(provideDesign)),
   )
 
-  it.instance("temporary working set tools", () =>
+  it.instance("temporary working set initializes from active set", () =>
     Effect.gen(function* () {
       const design = yield* Design.Service
       const ctxTool = yield* GraphAgentDesignTools.DesignDefineContextTool
       const nodeTool = yield* GraphAgentDesignTools.DesignDefineConceptTool
-      const addTool = yield* GraphAgentDesignTools.DesignWorksetAddTool
-      const removeTool = yield* GraphAgentDesignTools.DesignWorksetRemoveTool
-      const getTool = yield* GraphAgentDesignTools.DesignWorksetGetTool
+      const twsTool = yield* GraphAgentDesignTools.DesignGetTemporaryWorkingSetTool
       const ctx = makeCtx()
 
       const c = yield* (yield* Tool.init(ctxTool)).execute({ name: "系统" }, ctx)
       const contextId = c.metadata.contextId as string
+      yield* (yield* Tool.init(nodeTool)).execute({ name: "船", context: contextId }, ctx)
+      yield* design.applyAccumulatedChanges(ctx.sessionID)
 
-      yield* (yield* Tool.init(nodeTool)).execute(
-        { name: "船", context: contextId },
-        ctx,
-      )
-      const nodeId = yield* findAccumulatedNodeIdByName(design, ctx.sessionID, "船")
-
-      yield* (yield* Tool.init(addTool)).execute({ nodeIds: [nodeId], contextIds: [contextId] }, ctx)
-      const getResult = yield* (yield* Tool.init(getTool)).execute({}, ctx)
-      expect(getResult.metadata.nodeIds).toContain(nodeId)
-      expect(getResult.metadata.contextIds).toContain(contextId)
-
-      yield* (yield* Tool.init(removeTool)).execute({ nodeIds: [nodeId] }, ctx)
-      const afterRemove = yield* (yield* Tool.init(getTool)).execute({}, ctx)
-      expect(afterRemove.metadata.nodeIds).not.toContain(nodeId)
+      const tws = yield* (yield* Tool.init(twsTool)).execute({}, ctx)
+      expect(tws.output).toContain("系统")
+      expect(tws.output).toContain("船")
     }).pipe(Effect.provide(provideDesign)),
   )
 
@@ -323,7 +331,7 @@ describe("GraphAgent internal design tools", () => {
     Effect.gen(function* () {
       const ctxTool = yield* GraphAgentDesignTools.DesignDefineContextTool
       const nodeTool = yield* GraphAgentDesignTools.DesignDefineConceptTool
-      const findTool = yield* DesignFindConceptsTool
+      const searchTool = yield* GraphAgentDesignTools.DesignSearchGraphTool
       const ctx = makeCtx()
       const design = yield* Design.Service
 
@@ -332,8 +340,8 @@ describe("GraphAgent internal design tools", () => {
 
       yield* (yield* Tool.init(nodeTool)).execute({ name: "船", context: contextId }, ctx)
 
-      const before = yield* (yield* Tool.init(findTool)).execute({ query: "船" }, ctx)
-      expect(before.metadata.count).toBe(1)
+      const before = yield* (yield* Tool.init(searchTool)).execute({ query: "船" }, ctx)
+      expect(before.metadata.matchCount).toBe(1)
 
       yield* design.applyAccumulatedChanges(ctx.sessionID)
 
@@ -343,8 +351,8 @@ describe("GraphAgent internal design tools", () => {
       yield* (yield* Tool.init(nodeTool)).execute({ name: "生命值", context: contextId }, ctx)
       yield* design.clearAccumulatedChanges(ctx.sessionID)
 
-      const afterClear = yield* (yield* Tool.init(findTool)).execute({ query: "生命值" }, ctx)
-      expect(afterClear.metadata.count).toBe(0)
+      const afterClear = yield* (yield* Tool.init(searchTool)).execute({ query: "生命值" }, ctx)
+      expect(afterClear.metadata.matchCount).toBe(0)
     }).pipe(Effect.provide(provideDesign)),
   )
 })

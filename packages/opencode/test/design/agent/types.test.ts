@@ -8,25 +8,10 @@ describe("GraphAgent types", () => {
       request: "rename UserService",
       source: "chat",
       userInput: "rename UserService",
-      temporaryWorkingSet: {
-        contextIds: ["ctx-core"],
-        nodeIds: ["node-5"],
-        edgeKeys: [],
-        systemAnalysis: {
-          conflictingRelations: [],
-          duplicateNodeCandidates: [],
-          orphanNodes: [],
-          invalidPrototypeUsage: [],
-        },
-        expandedByGraphAgent: {
-          contextIds: [],
-          nodeIds: [],
-          edgeKeys: [],
-          reason: "",
-        },
-      },
-      activeWorkingSet: { contextIds: ["ctx-core"], nodeIds: ["node-5"], capacity: 10 },
-      graphState: { contexts: [], nodes: [], edges: [], prototypes: [] },
+      activeWorkingSet: [
+        { id: "ctx-core", name: "Core", type: "context", briefSemantics: "" },
+        { id: "node-5", name: "UserService", type: "node", briefSemantics: "" },
+      ],
       knownVersion: 1,
     }
     expect(input.source).toBe("chat")

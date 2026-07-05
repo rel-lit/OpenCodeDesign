@@ -1,31 +1,10 @@
 import { DesignTypes } from "@/design/core/types"
 
-export interface TemporaryWorkingSet {
-  contextIds: string[]
-  nodeIds: string[]
-  edgeKeys: string[]
-  systemAnalysis: {
-    conflictingRelations: Array<{
-      edgeKey: string
-      reason: string
-      severity: "error" | "warning"
-    }>
-    duplicateNodeCandidates: Array<{ nodeIds: string[]; similarityScore: number }>
-    orphanNodes: string[]
-    invalidPrototypeUsage: Array<{ edgeKey: string; prototypeId: string; reason: string }>
-  }
-  expandedByGraphAgent: {
-    contextIds: string[]
-    nodeIds: string[]
-    edgeKeys: string[]
-    reason: string
-  }
-}
-
-export interface ActiveWorkingSet {
-  contextIds: string[]
-  nodeIds: string[]
-  capacity: number
+export interface WorkingSetEntry {
+  id: string
+  name: string
+  type: "context" | "node"
+  briefSemantics: string
 }
 
 export interface GraphDelta {
@@ -102,9 +81,7 @@ export interface Input {
   request: string
   source: "chat" | "visual-editor"
   userInput: string
-  temporaryWorkingSet: TemporaryWorkingSet
-  activeWorkingSet: ActiveWorkingSet
-  graphState: DesignTypes.GraphState
+  activeWorkingSet: WorkingSetEntry[]
   knownVersion?: number
   changePlan?: ChangePlan
   force?: boolean

@@ -7,11 +7,7 @@ import { WorkingSet } from "./core/working-set"
 import { EventLog } from "./core/event-log"
 import { DesignTypes } from "./core/types"
 import { DesignStore } from "./store/store"
-import { DesignAgentLlm } from "./agent/llm"
 import * as GraphAgentTypes from "./agent/types"
-import { Preprocessor } from "./system/preprocessor"
-import { WorkingSetComputer } from "./system/working-set-computer"
-import { SystemAnalyzer } from "./system/analyzer"
 import { VersionSync } from "./system/version-sync"
 import { TemporaryWorkingSet } from "./system/temporary-working-set"
 import { ChangeAccumulator } from "./system/change-accumulator"
@@ -35,9 +31,8 @@ export interface Interface {
   readonly createPrototype: GraphEngine.Interface["createPrototype"]
   readonly listPrototypes: GraphEngine.Interface["listPrototypes"]
   readonly getPrototype: GraphEngine.Interface["getPrototype"]
-  readonly resolveReference: WorkingSet.Interface["resolveReference"]
-  readonly activateContext: WorkingSet.Interface["activateContext"]
-  readonly activateNode: WorkingSet.Interface["activateNode"]
+  readonly touchContext: WorkingSet.Interface["touchContext"]
+  readonly touchNode: WorkingSet.Interface["touchNode"]
   readonly listNodes: GraphEngine.Interface["listNodes"]
   readonly listEdges: GraphEngine.Interface["listEdges"]
   readonly listWorkingSet: WorkingSet.Interface["list"]
@@ -46,14 +41,6 @@ export interface Interface {
   readonly transaction: <A, E>(
     f: (txStore: DesignStore.Store) => Effect.Effect<A, E>,
   ) => Effect.Effect<A, E>
-  readonly preprocessInput: (input: string) => Effect.Effect<
-    {
-      processedText: string
-      temporaryWorkingSet: GraphAgentTypes.TemporaryWorkingSet
-      enriched?: GraphAgentTypes.Output
-    },
-    DesignAgentLlm.GenerateObjectError | Provider.DefaultModelError
-  >
   readonly handoffToPlan: (input: {
     diffAnalysis: PlanHandoff.PlanHandoffPayload["diffAnalysis"]
     designGraphSummary: string
@@ -67,8 +54,9 @@ export interface Interface {
   readonly isVisualEditorDirty: VersionSync.Interface["isVisualEditorDirty"]
   readonly checkChatAgentSync: VersionSync.Interface["checkChatAgentSync"]
   readonly getTemporaryWorkingSet: TemporaryWorkingSet.Interface["get"]
-  readonly updateTemporaryWorkingSet: TemporaryWorkingSet.Interface["update"]
-  readonly expandTemporaryWorkingSet: TemporaryWorkingSet.Interface["expand"]
+  readonly addTemporaryWorkingSetEntry: TemporaryWorkingSet.Interface["addEntry"]
+  readonly addTemporaryWorkingSetEntries: TemporaryWorkingSet.Interface["addEntries"]
+  readonly expandTemporaryWorkingSetNode: TemporaryWorkingSet.Interface["expandNode"]
   readonly resetTemporaryWorkingSet: TemporaryWorkingSet.Interface["reset"]
   readonly destroyTemporaryWorkingSet: TemporaryWorkingSet.Interface["destroy"]
   readonly getChangeAccumulator: ChangeAccumulator.Interface["getPendingDelta"]
@@ -195,7 +183,7 @@ export const layer = (options?: LayerOptions) =>
         Effect.gen(function* () {
           const ctx = yield* state.graph.createContext(input)
           const event = yield* state.eventLog.append({ eventType: "context_created", affectedNodeIds: [], affectedEdgeKeys: [] })
-          yield* state.workingSet.activateContext(ctx.id)
+          yield* state.workingSet.touchContext(ctx.id)
           yield* persistMutation(event)
           return ctx
         }),
@@ -207,7 +195,7 @@ export const layer = (options?: LayerOptions) =>
         Effect.gen(function* () {
           const node = yield* state.graph.createNode(input)
           const event = yield* state.eventLog.append({ eventType: "node_created", affectedNodeIds: [node.id] })
-          yield* state.workingSet.activateNode(node.id)
+          yield* state.workingSet.touchNode(node.id)
           yield* persistMutation(event)
           return node
         }),
@@ -223,28 +211,23 @@ export const layer = (options?: LayerOptions) =>
             affectedNodeIds: [edge.leftNodeId, edge.rightNodeId],
             affectedEdgeKeys: [DesignTypes.edgeKey(edge.leftNodeId, edge.rightNodeId)],
           })
-          yield* Effect.all([state.workingSet.activateNode(edge.leftNodeId), state.workingSet.activateNode(edge.rightNodeId)])
+          yield* Effect.all([state.workingSet.touchNode(edge.leftNodeId), state.workingSet.touchNode(edge.rightNodeId)])
           yield* persistMutation(event)
           return edge
         }),
       ),
     )
 
-    const resolveReference = Effect.fn("Design.resolveReference")((input: Parameters<WorkingSet.Interface["resolveReference"]>[0]) =>
+    const listContexts = Effect.fn("Design.listContexts")(() => use((state) => state.graph.listContexts()))
+    const getContext = Effect.fn("Design.getContext")((id: string) =>
       use((state) =>
         Effect.gen(function* () {
-          const result = yield* state.workingSet.resolveReference(input)
-          if (result.action === "created") {
-            const event = yield* state.eventLog.append({ eventType: "node_created", affectedNodeIds: [result.nodeId] })
-            yield* persistMutation(event)
-          }
-          return result
+          const ctx = yield* state.graph.getContext(id)
+          if (ctx) yield* state.workingSet.touchContext(ctx.id)
+          return ctx
         }),
       ),
     )
-
-    const listContexts = Effect.fn("Design.listContexts")(() => use((state) => state.graph.listContexts()))
-    const getContext = Effect.fn("Design.getContext")((id: string) => use((state) => state.graph.getContext(id)))
     const updateContext = Effect.fn("Design.updateContext")((id: string, input: Partial<Omit<DesignTypes.BoundedContext, "id">>) =>
       use((state) =>
         Effect.gen(function* () {
@@ -256,13 +239,21 @@ export const layer = (options?: LayerOptions) =>
       ),
     )
 
-    const getNode = Effect.fn("Design.getNode")((id: string) => use((state) => state.graph.getNode(id)))
+    const getNode = Effect.fn("Design.getNode")((id: string) =>
+      use((state) =>
+        Effect.gen(function* () {
+          const node = yield* state.graph.getNode(id)
+          if (node) yield* state.workingSet.touchNode(node.id)
+          return node
+        }),
+      ),
+    )
     const updateNode = Effect.fn("Design.updateNode")((id: string, input: Parameters<GraphEngine.Interface["updateNode"]>[1]) =>
       use((state) =>
         Effect.gen(function* () {
           const node = yield* state.graph.updateNode(id, input)
           const event = yield* state.eventLog.append({ eventType: "node_updated", affectedNodeIds: [node.id] })
-          yield* state.workingSet.activateNode(node.id)
+          yield* state.workingSet.touchNode(node.id)
           yield* persistMutation(event)
           return node
         }),
@@ -292,7 +283,15 @@ export const layer = (options?: LayerOptions) =>
       ),
     )
     const findNodesByName = Effect.fn("Design.findNodesByName")((name: string, contextId?: string) =>
-      use((state) => state.graph.findNodesByName(name, contextId)),
+      use((state) =>
+        Effect.gen(function* () {
+          const nodes = yield* state.graph.findNodesByName(name, contextId)
+          for (const node of nodes) {
+            yield* state.workingSet.touchNode(node.id)
+          }
+          return nodes
+        }),
+      ),
     )
 
     const updateEdge = Effect.fn("Design.updateEdge")((leftNodeId: string, rightNodeId: string, input: Parameters<GraphEngine.Interface["updateEdge"]>[2]) =>
@@ -304,7 +303,7 @@ export const layer = (options?: LayerOptions) =>
             affectedNodeIds: [edge.leftNodeId, edge.rightNodeId],
             affectedEdgeKeys: [DesignTypes.edgeKey(edge.leftNodeId, edge.rightNodeId)],
           })
-          yield* Effect.all([state.workingSet.activateNode(edge.leftNodeId), state.workingSet.activateNode(edge.rightNodeId)])
+          yield* Effect.all([state.workingSet.touchNode(edge.leftNodeId), state.workingSet.touchNode(edge.rightNodeId)])
           yield* persistMutation(event)
           return edge
         }),
@@ -319,7 +318,7 @@ export const layer = (options?: LayerOptions) =>
             affectedNodeIds: [leftNodeId, rightNodeId],
             affectedEdgeKeys: [DesignTypes.edgeKey(leftNodeId, rightNodeId)],
           })
-          yield* Effect.all([state.workingSet.activateNode(leftNodeId), state.workingSet.activateNode(rightNodeId)])
+          yield* Effect.all([state.workingSet.touchNode(leftNodeId), state.workingSet.touchNode(rightNodeId)])
           yield* persistMutation(event)
         }),
       ),
@@ -338,10 +337,10 @@ export const layer = (options?: LayerOptions) =>
     const listPrototypes = Effect.fn("Design.listPrototypes")(() => use((state) => state.graph.listPrototypes()))
     const getPrototype = Effect.fn("Design.getPrototype")((id: string) => use((state) => state.graph.getPrototype(id)))
 
-    const activateContext = Effect.fn("Design.activateContext")((contextId: string) =>
-      use((state) => state.workingSet.activateContext(contextId)),
+    const touchContext = Effect.fn("Design.touchContext")((contextId: string) =>
+      use((state) => state.workingSet.touchContext(contextId)),
     )
-    const activateNode = Effect.fn("Design.activateNode")((nodeId: string) => use((state) => state.workingSet.activateNode(nodeId)))
+    const touchNode = Effect.fn("Design.touchNode")((nodeId: string) => use((state) => state.workingSet.touchNode(nodeId)))
 
     const getState = Effect.fn("Design.getState")(() =>
       use((state) =>
@@ -370,28 +369,6 @@ export const layer = (options?: LayerOptions) =>
       yield* InstanceState.get(designState)
       yield* Effect.logInfo("design state initialized")
     })
-
-    const preprocessInput = Effect.fn("Design.preprocessInput")((input: string) =>
-      use((state) =>
-        Effect.gen(function* () {
-          const graphState = yield* state.graph.getState()
-          const activeWs = yield* state.workingSet.state()
-          const activeWorkingSet: GraphAgentTypes.ActiveWorkingSet = {
-            contextIds: [...activeWs.activeContextIds],
-            nodeIds: [...activeWs.activeNodeIds],
-            capacity: activeWs.capacity,
-          }
-          const expanded = Preprocessor.expandAtReferences(input, graphState)
-          const temporaryWorkingSet = WorkingSetComputer.fromInput(input, activeWorkingSet, graphState)
-          const analyzed = SystemAnalyzer.analyze(temporaryWorkingSet, graphState)
-          const processedText = Preprocessor.buildProcessedText(expanded, analyzed, undefined)
-          return {
-            processedText,
-            temporaryWorkingSet: analyzed,
-          }
-        }),
-      ),
-    )
 
     const transaction = <A, E>(f: (txStore: DesignStore.Store) => Effect.Effect<A, E>) =>
       use((state) => state.store.transaction(f))
@@ -613,9 +590,8 @@ export const layer = (options?: LayerOptions) =>
       createPrototype,
       listPrototypes,
       getPrototype,
-      resolveReference,
-      activateContext,
-      activateNode,
+      touchContext,
+      touchNode,
       listNodes: () => use((state) => state.graph.listNodes()),
       listEdges: () => use((state) => state.graph.listEdges()),
       listEdgesForNode,
@@ -623,7 +599,6 @@ export const layer = (options?: LayerOptions) =>
       getState,
       init,
       transaction,
-      preprocessInput,
       handoffToPlan,
       applyRawDelta,
       getCurrentVersion,
@@ -631,10 +606,12 @@ export const layer = (options?: LayerOptions) =>
       isVisualEditorDirty: () => use((state) => state.versionSync.isVisualEditorDirty()),
       checkChatAgentSync: () => use((state) => state.versionSync.checkChatAgentSync()),
       getTemporaryWorkingSet: (sessionID: string) => use((state) => state.temporaryWorkingSet.get(sessionID)),
-      updateTemporaryWorkingSet: (sessionID: string, input: TemporaryWorkingSet.Update) =>
-        use((state) => state.temporaryWorkingSet.update(sessionID, input)),
-      expandTemporaryWorkingSet: (sessionID: string, nodeId: string) =>
-        use((state) => state.temporaryWorkingSet.expand(sessionID, nodeId)),
+      addTemporaryWorkingSetEntry: (sessionID: string, entry: DesignTypes.WorkingSetEntry) =>
+        use((state) => state.temporaryWorkingSet.addEntry(sessionID, entry)),
+      addTemporaryWorkingSetEntries: (sessionID: string, entries: DesignTypes.WorkingSetEntry[]) =>
+        use((state) => state.temporaryWorkingSet.addEntries(sessionID, entries)),
+      expandTemporaryWorkingSetNode: (sessionID: string, nodeId: string) =>
+        use((state) => state.temporaryWorkingSet.expandNode(sessionID, nodeId)),
       resetTemporaryWorkingSet: (sessionID: string) => use((state) => state.temporaryWorkingSet.reset(sessionID)),
       destroyTemporaryWorkingSet: (sessionID: string) => use((state) => state.temporaryWorkingSet.destroy(sessionID)),
       getChangeAccumulator: (sessionID: string) => use((state) => state.changeAccumulator.getPendingDelta(sessionID)),

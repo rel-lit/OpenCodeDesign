@@ -107,7 +107,7 @@ const makeStore = (db: DbLike): Store => {
       nodes: nodes.map(rowFromNode),
       edges: edges.map(rowFromEdge),
       prototypes: prototypes.map(rowFromPrototype),
-      workingSet: { activeContextIds: [], activeNodeIds: [], capacity: 20 },
+      workingSet: { entries: [], capacity: 20 },
       eventLog: { events },
     } as DesignTypes.GraphState
   })
