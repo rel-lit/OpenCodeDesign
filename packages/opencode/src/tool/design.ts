@@ -29,11 +29,13 @@ export const DesignAskGraphTool = Tool.define(
       parameters: AskGraphParameters,
       execute: (args: Schema.Schema.Type<typeof AskGraphParameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
+          const graphPrompt = yield* buildGraphAgentPrompt({ design, mode: "cognition", request: args.question, ctx })
           const result = yield* task.execute(
             {
               description: "Design cognition",
               subagent_type: "design-graph",
-              prompt: yield* buildGraphAgentPrompt({ design, mode: "cognition", request: args.question, ctx }),
+              prompt: graphPrompt.prompt,
+              system: graphPrompt.system,
             },
             ctx,
           )
@@ -87,11 +89,13 @@ export const DesignRequestChangeTool = Tool.define(
               metadata: { syncRequired: true } as Record<string, unknown>,
             }
           }
+          const graphPrompt = yield* buildGraphAgentPrompt({ design, mode: "judge", request: args.intent, ctx })
           const result = yield* task.execute(
             {
               description: truncatePreview(args.intent, MAX_INTENT_PREVIEW_LENGTH),
               subagent_type: "design-graph",
-              prompt: yield* buildGraphAgentPrompt({ design, mode: "judge", request: args.intent, ctx }),
+              prompt: graphPrompt.prompt,
+              system: graphPrompt.system,
             },
             ctx,
           )
@@ -122,16 +126,18 @@ export const DesignSummarizeDesignTool = Tool.define(
       parameters: SummarizeDesignParameters,
       execute: (args: Schema.Schema.Type<typeof SummarizeDesignParameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
+          const graphPrompt = yield* buildGraphAgentPrompt({
+            design,
+            mode: "summarize",
+            request: "Summarize the current design.",
+            ctx,
+          })
           const result = yield* task.execute(
             {
               description: "Design summary",
               subagent_type: "design-graph",
-              prompt: yield* buildGraphAgentPrompt({
-                design,
-                mode: "summarize",
-                request: "Summarize the current design.",
-                ctx,
-              }),
+              prompt: graphPrompt.prompt,
+              system: graphPrompt.system,
             },
             ctx,
           )
@@ -226,7 +232,7 @@ function buildGraphAgentPrompt(input: {
   mode: "cognition" | "judge" | "summarize" | "review-save"
   request: string
   ctx: Tool.Context
-}): Effect.Effect<string> {
+}): Effect.Effect<{ prompt: string; system: string }> {
   return Effect.gen(function* () {
     const activeWs = yield* input.design.listWorkingSet()
     const graphState = yield* input.design.getState()
@@ -307,7 +313,7 @@ function buildGraphAgentPrompt(input: {
       ),
     )
 
-    return JSON.stringify({
+    const systemContext = {
       mode: input.mode,
       request: input.request,
       source: "chat" as const,
@@ -329,7 +335,12 @@ function buildGraphAgentPrompt(input: {
         prototypes,
       },
       knownVersion: version.sequence,
-    })
+    }
+
+    return {
+      prompt: input.request,
+      system: JSON.stringify(systemContext),
+    }
   })
 }
 

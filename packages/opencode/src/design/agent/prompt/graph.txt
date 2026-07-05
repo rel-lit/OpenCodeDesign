@@ -16,6 +16,8 @@
 
 ## 你收到的输入
 
+你的用户消息（User Message）只包含当前请求的简短描述。当前设计图的完整状态、工作集和版本信息以 JSON 格式附加在系统提示词（System Prompt）末尾，结构如下：
+
 ```json
 {
   "mode": "cognition" | "judge" | "refine" | "summarize" | "review-save",
