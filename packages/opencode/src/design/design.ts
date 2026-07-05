@@ -78,7 +78,10 @@ export interface Interface {
   readonly addAccumulatedEdge: ChangeAccumulator.Interface["addEdge"]
   readonly updateAccumulatedEdge: ChangeAccumulator.Interface["updateEdge"]
   readonly deleteAccumulatedEdge: ChangeAccumulator.Interface["deleteEdge"]
-  readonly applyAccumulatedChanges: (sessionID: string) => Effect.Effect<void, GraphEngine.GraphEngineError>
+  readonly applyAccumulatedChanges: (
+    sessionID: string,
+    options?: { source?: DesignTypes.VersionBumpSource },
+  ) => Effect.Effect<void, GraphEngine.GraphEngineError>
   readonly clearAccumulatedChanges: ChangeAccumulator.Interface["clear"]
   readonly getAccumulatedGraphState: ChangeAccumulator.Interface["getMergedState"]
   readonly findContextByNameOrId: (nameOrId: string) => Effect.Effect<DesignTypes.BoundedContext | undefined>
@@ -651,11 +654,11 @@ export const layer = (options?: LayerOptions) =>
       ) => use((state) => state.changeAccumulator.updateEdge(sessionID, leftNodeId, rightNodeId, patch)),
       deleteAccumulatedEdge: (sessionID: string, leftNodeId: string, rightNodeId: string) =>
         use((state) => state.changeAccumulator.deleteEdge(sessionID, leftNodeId, rightNodeId)),
-      applyAccumulatedChanges: (sessionID: string) =>
+      applyAccumulatedChanges: (sessionID: string, options?: { source?: DesignTypes.VersionBumpSource }) =>
         use((state) =>
           Effect.gen(function* () {
             const delta = yield* state.changeAccumulator.apply(sessionID)
-            yield* applyRawDelta(delta)
+            yield* applyRawDelta(delta, options?.source)
           }),
         ),
       clearAccumulatedChanges: (sessionID: string) => use((state) => state.changeAccumulator.clear(sessionID)),

@@ -858,6 +858,8 @@ export const dict = {
   "session.todo.progress": "已完成 {{done}} 個待辦事項（共 {{total}} 個）",
   "session.question.progress": "{{current}}/{{total}} 個問題",
   "session.designApproval.title": "設計變更審批",
+  "session.designApproval.finalizeTitle": "設計變更終稿確認",
+  "session.designApproval.optionRequired": "請選擇一個選項",
   "session.designApproval.apply": "應用",
   "session.designApproval.reject": "拒絕",
   "session.designApproval.revise": "修改",

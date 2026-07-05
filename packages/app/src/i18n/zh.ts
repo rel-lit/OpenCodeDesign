@@ -874,6 +874,8 @@ export const dict = {
   "session.todo.progress": "已完成 {{done}} 个任务（共 {{total}} 个）",
   "session.question.progress": "{{current}}/{{total}} 个问题",
   "session.designApproval.title": "设计变更审批",
+  "session.designApproval.finalizeTitle": "设计变更终稿确认",
+  "session.designApproval.optionRequired": "请选择一个选项",
   "session.designApproval.apply": "应用",
   "session.designApproval.reject": "拒绝",
   "session.designApproval.revise": "修改",

@@ -1433,6 +1433,16 @@ body:not([data-new-layout]) {
     }
   }
 
+  [data-component="dock-prompt"][data-kind="question"] [data-slot="question-text"][data-design-approval="true"] {
+    max-height: 240px;
+
+    [data-component="markdown"] {
+      font-size: 14px;
+      line-height: var(--line-height-large);
+      color: var(--v2-text-text-base);
+    }
+  }
+
   [data-component="question-answers"] {
     [data-slot="question-text"] {
       color: var(--text-weak);

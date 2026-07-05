@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Effect, Fiber, Layer, Queue } from "effect"
 import { testEffect } from "../lib/effect"
 import { Design } from "../../src/design/design"
 import { GraphAgentDesignTools } from "../../src/tool/design"
@@ -17,6 +17,8 @@ import { Agent } from "../../src/agent/agent"
 import { Truncate } from "@/tool/truncate"
 import { MessageID, SessionID } from "../../src/session/schema"
 import { testInstanceStoreLayer } from "../fixture/fixture"
+import { Question } from "../../src/question"
+import { EventV2Bridge } from "../../src/event-v2-bridge"
 
 const testDesignLayer = Design.layer().pipe(Layer.provide(DesignStore.defaultLayer))
 
@@ -36,7 +38,29 @@ const makeCtx = () => ({
 
 const it = testEffect(testInstanceStoreLayer)
 
-const provideDesign = Layer.mergeAll(Truncate.defaultLayer, Agent.defaultLayer, testDesignLayer)
+const provideDesign = Layer.mergeAll(
+  Truncate.defaultLayer,
+  Agent.defaultLayer,
+  testDesignLayer,
+  Question.layer.pipe(Layer.provideMerge(EventV2Bridge.defaultLayer)),
+)
+
+const pendingQuestion = Effect.fn("GraphAgentDesignTest.pendingQuestion")(function* (question: Question.Interface) {
+  const events = yield* EventV2Bridge.Service
+  const asked = yield* Queue.unbounded<void>()
+  const off = yield* events.listen((event) => {
+    if (event.type === Question.Event.Asked.type) Queue.offerUnsafe(asked, undefined)
+    return Effect.void
+  })
+  yield* Effect.addFinalizer(() => off)
+
+  for (;;) {
+    const items = yield* question.list()
+    const item = items[0]
+    if (item) return item
+    yield* Queue.take(asked).pipe(Effect.timeout("2 seconds"))
+  }
+})
 
 const findAccumulatedNodeIdByName = (design: Design.Interface, sessionID: string, name: string) =>
   Effect.gen(function* () {
@@ -222,14 +246,86 @@ describe("GraphAgent internal design tools", () => {
     }).pipe(Effect.provide(provideDesign)),
   )
 
-  it.instance("apply and clear queued changes", () =>
+  it.instance("finalize change applies accumulated changes on approve", () =>
     Effect.gen(function* () {
       const ctxTool = yield* GraphAgentDesignTools.DesignDefineContextTool
       const nodeTool = yield* GraphAgentDesignTools.DesignDefineConceptTool
-      const applyTool = yield* GraphAgentDesignTools.DesignApplyChangesTool
-      const clearTool = yield* GraphAgentDesignTools.DesignClearChangesTool
+      const finalizeTool = yield* GraphAgentDesignTools.DesignFinalizeChangeTool
+      const ctx = makeCtx()
+      const design = yield* Design.Service
+      const question = yield* Question.Service
+
+      const c = yield* (yield* Tool.init(ctxTool)).execute({ name: "系统" }, ctx)
+      const contextId = c.metadata.contextId as string
+      yield* (yield* Tool.init(nodeTool)).execute({ name: "船", context: contextId }, ctx)
+
+      const fiber = yield* (yield* Tool.init(finalizeTool)).execute({}, ctx).pipe(Effect.forkScoped)
+      const item = yield* pendingQuestion(question)
+      expect(item.questions[0]?.question).toContain("[design-finalize]")
+      yield* question.reply({ requestID: item.id, answers: [["Approve"]] })
+
+      const result = yield* Fiber.join(fiber)
+      expect(result.metadata.applied).toBe(true)
+
+      const nodes = yield* design.listNodes()
+      expect(nodes.some((n) => n.name === "船")).toBe(true)
+    }).pipe(Effect.provide(provideDesign)),
+  )
+
+  it.instance("finalize change abandons accumulated changes", () =>
+    Effect.gen(function* () {
+      const ctxTool = yield* GraphAgentDesignTools.DesignDefineContextTool
+      const nodeTool = yield* GraphAgentDesignTools.DesignDefineConceptTool
+      const finalizeTool = yield* GraphAgentDesignTools.DesignFinalizeChangeTool
+      const ctx = makeCtx()
+      const design = yield* Design.Service
+      const question = yield* Question.Service
+
+      const c = yield* (yield* Tool.init(ctxTool)).execute({ name: "系统" }, ctx)
+      const contextId = c.metadata.contextId as string
+      yield* (yield* Tool.init(nodeTool)).execute({ name: "船", context: contextId }, ctx)
+
+      const fiber = yield* (yield* Tool.init(finalizeTool)).execute({}, ctx).pipe(Effect.forkScoped)
+      const item = yield* pendingQuestion(question)
+      yield* question.reply({ requestID: item.id, answers: [["Abandon"]] })
+
+      const result = yield* Fiber.join(fiber)
+      expect(result.metadata.abandoned).toBe(true)
+
+      const nodes = yield* design.listNodes()
+      expect(nodes.some((n) => n.name === "船")).toBe(false)
+    }).pipe(Effect.provide(provideDesign)),
+  )
+
+  it.instance("finalize change returns revision signal", () =>
+    Effect.gen(function* () {
+      const ctxTool = yield* GraphAgentDesignTools.DesignDefineContextTool
+      const nodeTool = yield* GraphAgentDesignTools.DesignDefineConceptTool
+      const finalizeTool = yield* GraphAgentDesignTools.DesignFinalizeChangeTool
+      const ctx = makeCtx()
+      const question = yield* Question.Service
+
+      const c = yield* (yield* Tool.init(ctxTool)).execute({ name: "系统" }, ctx)
+      const contextId = c.metadata.contextId as string
+      yield* (yield* Tool.init(nodeTool)).execute({ name: "船", context: contextId }, ctx)
+
+      const fiber = yield* (yield* Tool.init(finalizeTool)).execute({}, ctx).pipe(Effect.forkScoped)
+      const item = yield* pendingQuestion(question)
+      yield* question.reply({ requestID: item.id, answers: [["Revise", "add more semantics"]] })
+
+      const result = yield* Fiber.join(fiber)
+      expect(result.metadata.revision).toBe(true)
+      expect(result.metadata.revisionText).toBe("add more semantics")
+    }).pipe(Effect.provide(provideDesign)),
+  )
+
+  it.instance("apply and clear queued changes via service", () =>
+    Effect.gen(function* () {
+      const ctxTool = yield* GraphAgentDesignTools.DesignDefineContextTool
+      const nodeTool = yield* GraphAgentDesignTools.DesignDefineConceptTool
       const findTool = yield* DesignFindConceptsTool
       const ctx = makeCtx()
+      const design = yield* Design.Service
 
       const c = yield* (yield* Tool.init(ctxTool)).execute({ name: "系统" }, ctx)
       const contextId = c.metadata.contextId as string
@@ -239,14 +335,13 @@ describe("GraphAgent internal design tools", () => {
       const before = yield* (yield* Tool.init(findTool)).execute({ query: "船" }, ctx)
       expect(before.metadata.count).toBe(1)
 
-      yield* (yield* Tool.init(applyTool)).execute({}, ctx)
+      yield* design.applyAccumulatedChanges(ctx.sessionID)
 
-      const design = yield* Design.Service
       const nodes = yield* design.listNodes()
       expect(nodes.some((n) => n.name === "船")).toBe(true)
 
       yield* (yield* Tool.init(nodeTool)).execute({ name: "生命值", context: contextId }, ctx)
-      yield* (yield* Tool.init(clearTool)).execute({}, ctx)
+      yield* design.clearAccumulatedChanges(ctx.sessionID)
 
       const afterClear = yield* (yield* Tool.init(findTool)).execute({ query: "生命值" }, ctx)
       expect(afterClear.metadata.count).toBe(0)

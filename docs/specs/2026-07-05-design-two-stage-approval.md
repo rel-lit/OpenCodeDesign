@@ -48,12 +48,12 @@ GraphAgent 以 `judge` 模式运行：
 
 | 选项 | 出现条件 | 行为 |
 |---|---|---|
-| **同意变更** | GraphAgent 未发现明显问题时 | 进入阶段二细化模式 |
-| **强行变更** | GraphAgent 发现明显问题时 | 进入阶段二细化模式，但 GraphAgent 被授权自主合理化细节，不再反复征求用户意见 |
-| **修订变更** | 始终出现 | 展开输入框，默认预填入一段基于用户视角的修订方向说明；用户可覆盖输入；提交后 GraphAgent 基于新建议重新分析并再次调用初稿审批 |
-| **拒绝变更** | 始终出现 | 终止子代理，返回 `rejected`；返回值包含 GraphAgent 之前提供的分析文本 |
+| **Approve** | GraphAgent 未发现明显问题时 | 进入阶段二细化模式 |
+| **Force** | GraphAgent 发现明显问题时 | 进入阶段二细化模式，但 GraphAgent 被授权自主合理化细节，不再反复征求用户意见 |
+| **Revise** | 始终出现 | 展开输入框，默认预填入一段基于用户视角的修订方向说明；用户可覆盖输入；提交后 GraphAgent 基于新建议重新分析并再次调用初稿审批 |
+| **Reject** | 始终出现 | 终止子代理，返回 `rejected`；返回值包含 GraphAgent 之前提供的分析文本 |
 
-- **同意变更** 与 **强行变更** 互斥，根据是否存在明显问题二选一。
+- **Approve** 与 **Force** 互斥，根据是否存在明显问题二选一。
 - 面板风格类似 Question 单选题面板，不是权限面板。
 
 ### 输出
@@ -119,7 +119,7 @@ GraphAgent 子代理最终返回给 ChatAgent 的 JSON 输出包含以下类型�
 | `cognition` | 设计认知、摘要、审查结果 |
 | `change-applied` | 初稿通过 + 细化完成 + 终稿同意，变更已提交 |
 | `abandoned` | 用户在终稿阶段选择废弃变更 |
-| `rejected` | 用户在初稿阶段选择拒绝变更 |
+| `rejected` | 用户在初稿阶段选择 Reject |
 | `needs-clarification` | 用户在初稿阶段选择修订，需要 ChatAgent 重新组织意图 |
 
 ---
@@ -168,7 +168,7 @@ GraphAgent 子代理最终返回给 ChatAgent 的 JSON 输出包含以下类型�
       → design-graph subagent (judge 模式)
         → 读图、分析、生成 Change Plan
           → 调用审批面板
-            → 用户选择"同意变更"
+            → 用户选择"Approve"
               → 进入 refine 模式
                 → Question 面板："‘船’的语义描述放什么？"
                   → 用户回答
@@ -179,7 +179,7 @@ GraphAgent 子代理最终返回给 ChatAgent 的 JSON 输出包含以下类型�
                 → 所有细节敲定
                   → design_finalize_change
                     → 展示所有待提交变更
-                      → 用户选择"同意"
+                      → 用户选择"Approve"
                         → 自动提交 accumulator
                           → bump version
                             → 返回 change-applied
@@ -195,9 +195,9 @@ GraphAgent 子代理最终返回给 ChatAgent 的 JSON 输出包含以下类型�
 - 标题：设计变更审批
 - 内容区：Markdown 渲染的 GraphAgent 分析与 Change Plan
 - 选项区：单选列表
-  - 同意变更 / 强行变更（二选一）
-  - 修订变更（选中后展开输入框，带默认提示文本）
-  - 拒绝变更
+  - Approve / Force（二选一）
+  - Revise（选中后展开输入框，带默认提示文本）
+  - Reject
 - 底部：提交按钮
 
 ### Question 面板（细化阶段）
@@ -211,9 +211,9 @@ GraphAgent 子代理最终返回给 ChatAgent 的 JSON 输出包含以下类型�
 - 标题：设计变更终稿确认
 - 内容区：Markdown 渲染的所有待提交变更细节
 - 选项区：单选列表
-  - 同意
-  - 废弃变更，选择退出
-  - 修订（选中后输入框必填）
+  - Approve
+  - Abandon
+  - Revise（选中后输入框必填）
 - 底部：提交按钮
 
 ---
@@ -228,7 +228,7 @@ GraphAgent 子代理最终返回给 ChatAgent 的 JSON 输出包含以下类型�
    - 单选 + 提交按钮，而非即时提交
    - 必填验证（终稿"修订"选项）
 4. 临时 accumulator 由 `Design.Service` 提供，绑定到 subagent sessionID。
-5. `design_finalize_change` 在用户选择"同意"后内部调用 `Design.applyRawDelta` 并 bump 版本。
+5. `design_finalize_change` 在用户选择"Approve"后内部调用 `Design.applyRawDelta` 并 bump 版本。
 
 ---
 

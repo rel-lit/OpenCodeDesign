@@ -60,9 +60,9 @@
   1. 读取当前 accumulator 状态（`Design.getAccumulatedGraphState`）。
   2. 生成人类可读的变更摘要。
   3. 调用 `question.ask`，header 使用 `[design-finalize]` 前缀，options 为：
-     - `同意`
-     - `废弃变更，选择退出`
-     - `修订`
+     - `Approve`
+     - `Abandon`
+     - `Revise`
   4. 等待用户回答：
      - `同意` → 调用 `Design.applyAccumulatedChanges(sessionID, { source: "graph-agent" })`，返回 `change-applied`。
      - `废弃变更，选择退出` → 调用 `Design.clearAccumulatedChanges(sessionID)`，返回 `abandoned`。
@@ -80,11 +80,11 @@
 - 将 `execute` 模式替换为 `refine` 模式。
 - 重写 `judge` 模式流程：
   - 生成 Change Plan 后调用审批面板。
-  - 选项为 `同意变更` / `强行变更` / `修订变更` / `拒绝变更`。
-  - 根据是否存在明显问题决定显示 `同意变更` 还是 `强行变更`。
-  - `同意变更` / `强行变更` → 进入 `refine` 模式。
-  - `拒绝变更` → 返回 `rejected`。
-  - `修订变更` → 读取用户输入，重新分析后再次调用审批面板。
+  - 选项为 `Approve` / `Force` / `Revise` / `Reject`。
+  - 根据是否存在明显问题决定显示 `Approve` 还是 `Force`。
+  - `Approve` / `Force` → 进入 `refine` 模式。
+  - `Reject` → 返回 `rejected`。
+  - `Revise` → 读取用户输入，重新分析后再次调用审批面板。
 - 新增 `refine` 模式流程：
   - 基于 Change Plan，通过 Question 面板逐个细节询问用户。
   - 每个细节确定后调用对应语义化 Tool 写入 accumulator。
@@ -123,29 +123,29 @@
   - `request.questions[0]?.header?.startsWith("[design-finalize]")` → 终稿
 - 使用单选列表 + 提交按钮，而不是三个独立按钮。
 - 初稿选项：
-  - `同意变更`（根据 metadata 决定是否渲染）
-  - `强行变更`（根据 metadata 决定是否渲染）
-  - `修订变更`（选中后展开输入框，带默认预填入文本）
-  - `拒绝变更`
+  - `Approve`（根据 options 决定是否渲染）
+  - `Force`（根据 options 决定是否渲染）
+  - `Revise`（选中后展开输入框，带默认预填入文本）
+  - `Reject`
 - 终稿选项：
-  - `同意`
-  - `废弃变更，选择退出`
-  - `修订`（选中后输入框必填）
+  - `Approve`
+  - `Abandon`
+  - `Revise`（选中后输入框必填）
 - 提交时根据选中的 radio 发送对应 answer：
-  - `同意变更` → `["同意变更"]`
-  - `强行变更` → `["强行变更"]`
-  - `修订变更` → `["修订变更", text]`
-  - `拒绝变更` → 调用 `question.reject`
-  - `同意` → `["同意"]`
-  - `废弃变更，选择退出` → `["废弃变更，选择退出"]`
-  - `修订` → `["修订", text]`
+  - `Approve` → `["Approve"]`
+  - `Force` → `["Force"]`
+  - `Revise` → `["Revise", text]`
+  - `Reject` → `["Reject"]`
+  - `Approve`（终稿） → `["Approve"]`
+  - `Abandon` → `["Abandon"]`
+  - `Revise`（终稿） → `["Revise", text]`
 
 **问题**：如何传递"是否存在明显问题"给前端？
 
 方案 A（推荐，无需改 schema）：在 `question.ask` 的 `options` 中直接只放应该出现的选项。GraphAgent 根据是否存在问题构造不同的 options 数组。前端只渲染收到的 options，无需额外 metadata。
 
-- 无问题：options = [同意变更, 修订变更, 拒绝变更]
-- 有问题：options = [强行变更, 修订变更, 拒绝变更]
+- 无问题：options = [Approve, Revise, Reject]
+- 有问题：options = [Force, Revise, Reject]
 
 这样前端不需要知道"互斥"逻辑，只需要支持单选 + 提交 + 修订输入框。
 
@@ -273,16 +273,16 @@
 
 ## 验收标准
 
-- [ ] `design_request_change` 触发 design-graph subagent 后，用户看到初稿审批面板。
-- [ ] 初稿面板根据是否存在明显问题显示 同意变更 或 强行变更。
-- [ ] 选择同意/强行后，进入 Question 面板逐个细节询问。
-- [ ] 每个细节确定后写入 accumulator，不立即落库。
-- [ ] 所有细节完成后，出现终稿审批面板。
-- [ ] 终稿选择同意 → 自动提交所有变更，返回 `change-applied`。
-- [ ] 终稿选择废弃 → 清空 accumulator，返回 `abandoned`。
-- [ ] 终稿选择修订 → 必填输入框，返回细化流程。
-- [ ] 初稿选择拒绝 → 返回 `rejected`。
-- [ ] 初稿选择修订 → 带默认提示文本，重新分析。
-- [ ] 子代理终止时 accumulator 自动清理。
-- [ ] `bun run typecheck` 全过。
+- [x] `design_request_change` 触发 design-graph subagent 后，用户看到初稿审批面板。
+- [x] 初稿面板根据是否存在明显问题显示 Approve 或 Force。
+- [x] 选择 Approve/Force 后，进入 Question 面板逐个细节询问。
+- [x] 每个细节确定后写入 accumulator，不立即落库。
+- [x] 所有细节完成后，出现终稿审批面板。
+- [x] 终稿选择 Approve → 自动提交所有变更，返回 `change-applied`。
+- [x] 终稿选择 Abandon → 清空 accumulator，返回 `abandoned`。
+- [x] 终稿选择 Revise → 必填输入框，返回细化流程。
+- [x] 初稿选择 Reject → 返回 `rejected`。
+- [x] 初稿选择 Revise → 带默认提示文本，重新分析。
+- [x] 子代理终止时 accumulator 自动清理。
+- [x] `bun run typecheck` 全过。
 - [ ] 真实 GUI 测试通过。

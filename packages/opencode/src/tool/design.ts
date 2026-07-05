@@ -7,6 +7,7 @@ import { Agent } from "@/agent/agent"
 import { Truncate } from "./truncate"
 import { DesignTypes } from "@/design/core/types"
 import * as GraphAgentTypes from "@/design/agent/types"
+import { Question } from "@/question"
 
 const designToolDescription = (description: string) =>
   `${description} (Design graph semantic tool; only the design-graph subagent may use this.)`
@@ -889,57 +890,160 @@ export const DesignDefineRelationPrototypeTool = Tool.define<
   }),
 )
 
-const ApplyChangesParameters = Schema.Struct({})
+const FinalizeChangeParameters = Schema.Struct({})
 
-export const DesignApplyChangesTool = Tool.define<
-  typeof ApplyChangesParameters,
+export const DesignFinalizeChangeTool = Tool.define<
+  typeof FinalizeChangeParameters,
   Record<string, unknown>,
-  Design.Service
+  Design.Service | Question.Service
 >(
-  "design_apply_changes",
+  "design_finalize_change",
   Effect.gen(function* () {
     const design = yield* Design.Service
+    const question = yield* Question.Service
     return {
-      description: designToolDescription("Apply all queued graph changes in this subagent session."),
-      parameters: ApplyChangesParameters,
+      description: designToolDescription(
+        "Present all pending design changes to the user for final approval. The tool automatically applies the changes if the user agrees, discards them if the user abandons, or returns for further refinement.",
+      ),
+      parameters: FinalizeChangeParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          yield* design.applyAccumulatedChanges(ctx.sessionID)
+          const state = yield* design.getAccumulatedGraphState(ctx.sessionID)
+          const pending = yield* design.getChangeAccumulator(ctx.sessionID)
+          const summary = yield* design.summarizeGraphState(state)
+          const details = yield* formatPendingDelta(design, pending)
+
+          const answers = yield* question.ask({
+            sessionID: ctx.sessionID,
+            questions: [
+              {
+                header: "Finalize design changes",
+                question: `[design-finalize] ## 待提交变更摘要\n${summary}\n\n## 变更详情\n${details || "无具体变更"}`,
+                options: [
+                  { label: "Approve", description: "Apply all pending changes" },
+                  { label: "Abandon", description: "Discard all pending changes" },
+                  { label: "Revise", description: "I need to refine some details" },
+                ],
+                custom: true,
+              },
+            ],
+            tool: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
+          })
+
+          const choice = answers[0]
+          if (!choice || choice.length === 0) {
+            return {
+              title: "No response",
+              output: "User did not provide a response. Please ask again.",
+              metadata: { pending },
+            }
+          }
+
+          const label = choice[0]
+
+          if (label === "Approve") {
+            yield* design.applyAccumulatedChanges(ctx.sessionID, { source: "graph-agent" })
+            const version = yield* design.getCurrentVersion()
+            return {
+              title: "Changes applied",
+              output: "All pending changes have been applied to the design graph.",
+              metadata: { version: version.sequence, applied: true },
+            }
+          }
+
+          if (label === "Abandon") {
+            yield* design.clearAccumulatedChanges(ctx.sessionID)
+            return {
+              title: "Changes abandoned",
+              output: "All pending changes have been discarded.",
+              metadata: { abandoned: true },
+            }
+          }
+
+          const revisionText = choice.slice(1).join(" ").trim()
           return {
-            title: "Changes applied",
-            output: "All queued changes have been applied to the design graph.",
-            metadata: {},
+            title: "Revision requested",
+            output: revisionText
+              ? `Please refine the changes based on: ${revisionText}`
+              : "Please specify how to refine the changes.",
+            metadata: { revision: true, revisionText },
           }
         }).pipe(Effect.orDie),
     }
   }),
 )
 
-const ClearChangesParameters = Schema.Struct({})
+function formatPendingDelta(design: Design.Interface, delta: GraphAgentTypes.GraphDelta): Effect.Effect<string> {
+  return Effect.gen(function* () {
+    const nodeName = (id: string) =>
+      Effect.gen(function* () {
+        const node = yield* design.findNodeByNameOrId(id)
+        return node?.name ?? id
+      })
 
-export const DesignClearChangesTool = Tool.define<
-  typeof ClearChangesParameters,
-  Record<string, unknown>,
-  Design.Service
->(
-  "design_clear_changes",
-  Effect.gen(function* () {
-    const design = yield* Design.Service
-    return {
-      description: designToolDescription("Discard all queued graph changes in this subagent session."),
-      parameters: ClearChangesParameters,
-      execute: (args, ctx) =>
-        Effect.gen(function* () {
-          yield* design.clearAccumulatedChanges(ctx.sessionID)
-          return {
-            title: "Changes cleared",
-            output: "All queued changes have been discarded.",
-            metadata: {},
-          }
-        }).pipe(Effect.orDie),
+    const contextName = (id: string) =>
+      Effect.gen(function* () {
+        const ctx = yield* design.findContextByNameOrId(id)
+        return ctx?.name ?? id
+      })
+
+    const prototypeName = (id: string) =>
+      Effect.gen(function* () {
+        const proto = yield* design.getPrototype(id)
+        return proto?.name ?? id
+      })
+
+    const lines: string[] = []
+
+    for (const node of delta.addNodes ?? []) {
+      const ctx = yield* contextName(node.contextId)
+      lines.push(`- 新增概念：${node.name}（上下文：${ctx}）`)
     }
-  }),
-)
+
+    for (const update of delta.updateNodes ?? []) {
+      const name = yield* nodeName(update.id)
+      const fields = Object.keys(update.patch ?? {})
+      const detail = fields.length ? `（更新字段：${fields.join("、")}）` : ""
+      lines.push(`- 更新概念：${name}${detail}`)
+    }
+
+    for (const id of delta.deleteNodeIds ?? []) {
+      const name = yield* nodeName(id)
+      lines.push(`- 删除概念：${name}`)
+    }
+
+    for (const edge of delta.addEdges ?? []) {
+      const [left, right, proto] = yield* Effect.all([
+        nodeName(edge.leftNodeId),
+        nodeName(edge.rightNodeId),
+        prototypeName(edge.prototypeId),
+      ])
+      lines.push(`- 新增关系：${left} --[${proto}]--> ${right}`)
+    }
+
+    for (const update of delta.updateEdges ?? []) {
+      const [left, right] = yield* Effect.all([
+        nodeName(update.leftNodeId),
+        nodeName(update.rightNodeId),
+      ])
+      const fields = Object.keys(update.patch ?? {})
+      const detail = fields.length ? `（更新字段：${fields.join("、")}）` : ""
+      lines.push(`- 更新关系：${left} <-> ${right}${detail}`)
+    }
+
+    for (const key of delta.deleteEdgeKeys ?? []) {
+      const ids = key.split("::")
+      if (ids.length === 2) {
+        const [left, right] = yield* Effect.all([nodeName(ids[0]!), nodeName(ids[1]!)])
+        lines.push(`- 删除关系：${left} <-> ${right}`)
+      } else {
+        lines.push(`- 删除关系：${key}`)
+      }
+    }
+
+    return lines.join("\n")
+  })
+}
 
 export const ChatAgentDesignTools = [
   DesignAskGraphTool,
@@ -968,6 +1072,5 @@ export const GraphAgentDesignTools = {
   DesignWorksetAddTool,
   DesignWorksetRemoveTool,
   DesignWorksetExpandTool,
-  DesignApplyChangesTool,
-  DesignClearChangesTool,
+  DesignFinalizeChangeTool,
 }

@@ -339,6 +339,9 @@ export const TaskTool = Tool.define(
           Effect.gen(function* () {
             if (Exit.hasInterrupts(exit))
               yield* Effect.all([cancel, background.cancel(nextSession.id)], { discard: true })
+            if (next.name === "design-graph") {
+              yield* design.clearAccumulatedChanges(nextSession.id).pipe(Effect.ignore)
+            }
           }).pipe(
             Effect.ensuring(
               Effect.sync(() => {

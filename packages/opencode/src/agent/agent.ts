@@ -252,6 +252,7 @@ export const layer = Layer.effect(
           design_workset_add: "allow",
           design_workset_remove: "allow",
           design_workset_expand: "allow",
+          design_finalize_change: "allow",
         })
 
         const graphAgentInfo: Info = {

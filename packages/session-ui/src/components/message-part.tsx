@@ -539,6 +539,7 @@ function designInternalToolInfo(i18n: UiI18n, tool: string, input: Record<string
     design_relate_concepts: "关联概念",
     design_withdraw_relation: "撤销关系",
     design_define_relation_prototype: "定义关系原型",
+    design_finalize_change: "提交设计变更终稿",
     design_apply_changes: "应用设计变更",
     design_clear_changes: "清空设计变更",
     design_create_context: "创建限界上下文",
@@ -1494,8 +1495,9 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
 
   const taskLikeInput = createMemo(() => {
     if (!isDesignSubagentTool(part().tool)) return input()
+    const { prompt: _, ...rest } = input()
     return {
-      ...input(),
+      ...rest,
       subagent_type: designSubagentType(part().tool),
       description: designSubagentSubtitle(input()),
     }

@@ -98,7 +98,7 @@ export interface ChangePlan {
 }
 
 export interface Input {
-  mode: "cognition" | "judge" | "execute" | "summarize" | "review-save"
+  mode: "cognition" | "judge" | "refine" | "summarize" | "review-save"
   request: string
   source: "chat" | "visual-editor"
   userInput: string
@@ -107,6 +107,7 @@ export interface Input {
   graphState: DesignTypes.GraphState
   knownVersion?: number
   changePlan?: ChangePlan
+  force?: boolean
   visualEditorDelta?: GraphDelta
 }
 
@@ -118,7 +119,7 @@ export interface Insight {
 }
 
 export interface Output {
-  type: "cognition" | "change-applied" | "rejected" | "needs-clarification"
+  type: "cognition" | "change-applied" | "abandoned" | "rejected" | "needs-clarification"
   summary: string
   insights?: Insight[]
   proposal?: {

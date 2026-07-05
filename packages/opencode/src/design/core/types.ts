@@ -73,7 +73,7 @@ export const EventType = Schema.Literals([
 ])
 export type EventType = Schema.Schema.Type<typeof EventType>
 
-export const VersionBumpSource = Schema.Literals(["chat-agent", "visual-editor"])
+export const VersionBumpSource = Schema.Literals(["chat-agent", "visual-editor", "graph-agent"])
 export type VersionBumpSource = Schema.Schema.Type<typeof VersionBumpSource>
 
 export const EventNode = Schema.Struct({
