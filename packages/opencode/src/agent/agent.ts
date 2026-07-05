@@ -228,6 +228,7 @@ export const layer = Layer.effect(
           design_relate_concepts: "allow",
           design_withdraw_relation: "allow",
           design_define_relation_prototype: "allow",
+          design_request_approval: "allow",
           design_finalize_change: "allow",
         })
 
@@ -254,6 +255,8 @@ export const layer = Layer.effect(
               glob: "allow",
               list: "allow",
               bash: "allow",
+              webfetch: "allow",
+              websearch: "allow",
               read: "allow",
               external_directory: readonlyExternalDirectory,
             }),

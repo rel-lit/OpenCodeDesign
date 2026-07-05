@@ -498,6 +498,10 @@ function designSubagentSubtitle(i18n: UiI18n, tool: string) {
   return ""
 }
 
+function isDesignApprovalTool(tool: string) {
+  return tool === "design_request_approval" || tool === "design_finalize_change"
+}
+
 function isDesignSubagentTool(tool: string) {
   return [
     "design_ask_graph",
@@ -538,7 +542,6 @@ function designInternalToolInfo(i18n: UiI18n, tool: string, input: Record<string
     design_relate_concepts: "关联概念",
     design_withdraw_relation: "撤销关系",
     design_define_relation_prototype: "定义关系原型",
-    design_finalize_change: "提交设计变更终稿",
     design_apply_changes: "应用设计变更",
     design_clear_changes: "清空设计变更",
     design_create_context: "创建限界上下文",
@@ -1521,6 +1524,7 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
   const render = createMemo(() => {
     const registered = ToolRegistry.render(part().tool)
     if (registered) return registered
+    if (isDesignApprovalTool(part().tool)) return ToolRegistry.render("design_approval")
     if (isDesignSubagentTool(part().tool)) return ToolRegistry.render("task")
     return GenericTool
   })
@@ -2527,6 +2531,67 @@ ToolRegistry.register({
                   <div data-slot="question-answer-item">
                     <div data-slot="question-text">{q.question}</div>
                     <div data-slot="answer-text">{answer().join(", ") || i18n.t("ui.question.answer.none")}</div>
+                  </div>
+                )
+              }}
+            </For>
+          </div>
+        </Show>
+      </BasicTool>
+    )
+  },
+})
+
+ToolRegistry.register({
+  name: "design_approval",
+  render(props) {
+    const i18n = useI18n()
+    const questions = createMemo(() => (props.metadata.questions ?? []) as QuestionInfo[])
+    const answers = createMemo(() => (props.metadata.answers ?? []) as QuestionAnswer[])
+    const completed = createMemo(() => answers().length > 0)
+    const isFirst = props.tool === "design_request_approval"
+
+    const title = createMemo(() => {
+      if (isFirst) return "初稿审批"
+      return "终稿审批"
+    })
+
+    const subtitle = createMemo(() => {
+      const count = questions().length
+      if (count === 0) return ""
+      if (completed()) return i18n.t("ui.question.subtitle.answered", { count })
+      return `${count} ${i18n.t(count > 1 ? "ui.common.question.other" : "ui.common.question.one")}`
+    })
+
+    const body = createMemo(() => {
+      const q = questions()[0]
+      if (!q) return ""
+      return q.question.replace(/^\[design-(approval|finalize)\]\s*/, "")
+    })
+
+    return (
+      <BasicTool
+        {...props}
+        defaultOpen={completed()}
+        icon="branch"
+        trigger={{
+          title: title(),
+          subtitle: subtitle(),
+        }}
+      >
+        <Show when={completed()}>
+          <div data-component="design-approval-answers">
+            <For each={questions()}>
+              {(q, i) => {
+                const answer = () => answers()[i()] ?? []
+                return (
+                  <div data-slot="design-approval-answer-item">
+                    <div data-slot="design-approval-question">
+                      <Markdown text={body()} />
+                    </div>
+                    <div data-slot="design-approval-answer">
+                      {answer().join(", ") || i18n.t("ui.question.answer.none")}
+                    </div>
                   </div>
                 )
               }}

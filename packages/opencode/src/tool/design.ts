@@ -893,22 +893,22 @@ export const DesignFinalizeChangeTool = Tool.define<
           const state = yield* design.getAccumulatedGraphState(ctx.sessionID)
           const pending = yield* design.getChangeAccumulator(ctx.sessionID)
           const summary = yield* design.summarizeGraphState(state)
-          const details = yield* formatPendingDelta(design, pending)
+          const details = yield* formatPendingDelta(state, pending)
+
+          const approvalQuestion = {
+            header: "Finalize design changes",
+            question: `[design-finalize] ## 待提交变更摘要\n${summary}\n\n## 变更详情\n${details || "无具体变更"}`,
+            options: [
+              { label: "Approve", description: "Apply all pending changes" },
+              { label: "Abandon", description: "Discard all pending changes" },
+              { label: "Revise", description: "I need to refine some details" },
+            ],
+            custom: true,
+          }
 
           const answers = yield* question.ask({
             sessionID: ctx.sessionID,
-            questions: [
-              {
-                header: "Finalize design changes",
-                question: `[design-finalize] ## 待提交变更摘要\n${summary}\n\n## 变更详情\n${details || "无具体变更"}`,
-                options: [
-                  { label: "Approve", description: "Apply all pending changes" },
-                  { label: "Abandon", description: "Discard all pending changes" },
-                  { label: "Revise", description: "I need to refine some details" },
-                ],
-                custom: true,
-              },
-            ],
+            questions: [approvalQuestion],
             tool: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
           })
 
@@ -922,6 +922,10 @@ export const DesignFinalizeChangeTool = Tool.define<
           }
 
           const label = choice[0]
+          const baseMetadata = {
+            questions: [approvalQuestion],
+            answers,
+          }
 
           if (label === "Approve") {
             yield* design.applyAccumulatedChanges(ctx.sessionID, { source: "graph-agent" })
@@ -929,7 +933,7 @@ export const DesignFinalizeChangeTool = Tool.define<
             return {
               title: "Changes applied",
               output: "All pending changes have been applied to the design graph.",
-              metadata: { version: version.sequence, applied: true },
+              metadata: { ...baseMetadata, result: "applied", version: version.sequence, applied: true },
             }
           }
 
@@ -938,7 +942,7 @@ export const DesignFinalizeChangeTool = Tool.define<
             return {
               title: "Changes abandoned",
               output: "All pending changes have been discarded.",
-              metadata: { abandoned: true },
+              metadata: { ...baseMetadata, result: "abandoned", abandoned: true },
             }
           }
 
@@ -948,66 +952,149 @@ export const DesignFinalizeChangeTool = Tool.define<
             output: revisionText
               ? `Please refine the changes based on: ${revisionText}`
               : "Please specify how to refine the changes.",
-            metadata: { revision: true, revisionText },
+            metadata: { ...baseMetadata, result: "revision", revision: true, revisionText },
           }
         }).pipe(Effect.orDie),
     }
   }),
 )
 
-function formatPendingDelta(design: Design.Interface, delta: GraphAgentTypes.GraphDelta): Effect.Effect<string> {
+const RequestApprovalParameters = Schema.Struct({
+  summary: Schema.String.annotate({ description: "Concise Markdown summary of the proposed change plan" }),
+  warnings: Schema.optional(Schema.String).annotate({
+    description: "Optional Markdown warnings or issues discovered during analysis",
+  }),
+  has_issues: Schema.optional(Schema.Boolean).annotate({
+    description: "Whether the plan has obvious issues that justify a Force option",
+  }),
+})
+
+export const DesignRequestApprovalTool = Tool.define<
+  typeof RequestApprovalParameters,
+  Record<string, unknown>,
+  Design.Service | Question.Service
+>(
+  "design_request_approval",
+  Effect.gen(function* () {
+    const question = yield* Question.Service
+    return {
+      description: designToolDescription(
+        "Present the first-stage design change plan to the user for approval. Use this instead of the generic question tool for design approvals.",
+      ),
+      parameters: RequestApprovalParameters,
+      execute: (args, ctx) =>
+        Effect.gen(function* () {
+          const bodyLines = ["## 变更计划", args.summary]
+          if (args.warnings?.trim()) {
+            bodyLines.push("", "## 需要注意的问题", args.warnings)
+          }
+
+          const options = args.has_issues
+            ? [
+                { label: "Force", description: "Proceed and rationalize details autonomously" },
+                { label: "Revise", description: "I need to modify the plan" },
+                { label: "Reject", description: "Abandon this change" },
+              ]
+            : [
+                { label: "Approve", description: "Proceed with this change plan" },
+                { label: "Revise", description: "I need to modify the plan" },
+                { label: "Reject", description: "Abandon this change" },
+              ]
+
+          const approvalQuestion = {
+            header: "设计变更审批",
+            question: `[design-approval] ${bodyLines.join("\n")}`,
+            options,
+            custom: true,
+          }
+
+          const answers = yield* question.ask({
+            sessionID: ctx.sessionID,
+            questions: [approvalQuestion],
+            tool: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
+          })
+
+          const choice = answers[0]
+          if (!choice || choice.length === 0) {
+            return {
+              title: "No response",
+              output: "User did not provide a response. Please ask again.",
+              metadata: {},
+            }
+          }
+
+          const label = choice[0]
+          const revisionText = choice.slice(1).join(" ").trim()
+          const baseMetadata = {
+            questions: [approvalQuestion],
+            answers,
+          }
+
+          if (label === "Approve" || label === "Force") {
+            return {
+              title: label === "Force" ? "Force approved" : "Approved",
+              output: `User ${label === "Force" ? "force-approved" : "approved"} the change plan.`,
+              metadata: { ...baseMetadata, result: label.toLowerCase() },
+            }
+          }
+
+          if (label === "Reject") {
+            return {
+              title: "Rejected",
+              output: "User rejected the change plan.",
+              metadata: { ...baseMetadata, result: "reject" },
+            }
+          }
+
+          return {
+            title: "Revision requested",
+            output: revisionText
+              ? `Please revise the change plan based on: ${revisionText}`
+              : "Please specify how to revise the change plan.",
+            metadata: { ...baseMetadata, result: "revise", revisionText },
+          }
+        }).pipe(Effect.orDie),
+    }
+  }),
+)
+
+function formatPendingDelta(state: DesignTypes.GraphState, delta: GraphAgentTypes.GraphDelta): Effect.Effect<string> {
   return Effect.gen(function* () {
-    const nodeName = (id: string) =>
-      Effect.gen(function* () {
-        const node = yield* design.findNodeByNameOrId(id)
-        return node?.name ?? id
-      })
+    const nodeName = (id: string) => state.nodes.find((n) => n.id === id || n.name === id || n.aliases.includes(id))?.name ?? id
 
-    const contextName = (id: string) =>
-      Effect.gen(function* () {
-        const ctx = yield* design.findContextByNameOrId(id)
-        return ctx?.name ?? id
-      })
+    const contextName = (id: string) => state.contexts.find((c) => c.id === id || c.name === id)?.name ?? id
 
-    const prototypeName = (id: string) =>
-      Effect.gen(function* () {
-        const proto = yield* design.getPrototype(id)
-        return proto?.name ?? id
-      })
+    const prototypeName = (id: string) => state.prototypes.find((p) => p.id === id || p.name === id)?.name ?? id
 
     const lines: string[] = []
 
     for (const node of delta.addNodes ?? []) {
-      const ctx = yield* contextName(node.contextId)
+      const ctx = contextName(node.contextId)
       lines.push(`- 新增概念：${node.name}（上下文：${ctx}）`)
     }
 
     for (const update of delta.updateNodes ?? []) {
-      const name = yield* nodeName(update.id)
+      const name = nodeName(update.id)
       const fields = Object.keys(update.patch ?? {})
       const detail = fields.length ? `（更新字段：${fields.join("、")}）` : ""
       lines.push(`- 更新概念：${name}${detail}`)
     }
 
     for (const id of delta.deleteNodeIds ?? []) {
-      const name = yield* nodeName(id)
+      const name = nodeName(id)
       lines.push(`- 删除概念：${name}`)
     }
 
     for (const edge of delta.addEdges ?? []) {
-      const [left, right, proto] = yield* Effect.all([
-        nodeName(edge.leftNodeId),
-        nodeName(edge.rightNodeId),
-        prototypeName(edge.prototypeId),
-      ])
+      const left = nodeName(edge.leftNodeId)
+      const right = nodeName(edge.rightNodeId)
+      const proto = prototypeName(edge.prototypeId)
       lines.push(`- 新增关系：${left} --[${proto}]--> ${right}`)
     }
 
     for (const update of delta.updateEdges ?? []) {
-      const [left, right] = yield* Effect.all([
-        nodeName(update.leftNodeId),
-        nodeName(update.rightNodeId),
-      ])
+      const left = nodeName(update.leftNodeId)
+      const right = nodeName(update.rightNodeId)
       const fields = Object.keys(update.patch ?? {})
       const detail = fields.length ? `（更新字段：${fields.join("、")}）` : ""
       lines.push(`- 更新关系：${left} <-> ${right}${detail}`)
@@ -1016,8 +1103,7 @@ function formatPendingDelta(design: Design.Interface, delta: GraphAgentTypes.Gra
     for (const key of delta.deleteEdgeKeys ?? []) {
       const ids = key.split("::")
       if (ids.length === 2) {
-        const [left, right] = yield* Effect.all([nodeName(ids[0]!), nodeName(ids[1]!)])
-        lines.push(`- 删除关系：${left} <-> ${right}`)
+        lines.push(`- 删除关系：${nodeName(ids[0]!)} <-> ${nodeName(ids[1]!)}`)
       } else {
         lines.push(`- 删除关系：${key}`)
       }
@@ -1050,5 +1136,6 @@ export const GraphAgentDesignTools = {
   DesignRelateConceptsTool,
   DesignWithdrawRelationTool,
   DesignDefineRelationPrototypeTool,
+  DesignRequestApprovalTool,
   DesignFinalizeChangeTool,
 }

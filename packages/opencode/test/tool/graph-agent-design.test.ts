@@ -274,6 +274,9 @@ describe("GraphAgent internal design tools", () => {
 
       const result = yield* Fiber.join(fiber)
       expect(result.metadata.applied).toBe(true)
+      expect(result.metadata.result).toBe("applied")
+      expect(Array.isArray(result.metadata.questions)).toBe(true)
+      expect(Array.isArray(result.metadata.answers)).toBe(true)
 
       const nodes = yield* design.listNodes()
       expect(nodes.some((n) => n.name === "船")).toBe(true)
@@ -324,6 +327,47 @@ describe("GraphAgent internal design tools", () => {
       const result = yield* Fiber.join(fiber)
       expect(result.metadata.revision).toBe(true)
       expect(result.metadata.revisionText).toBe("add more semantics")
+      expect(result.metadata.result).toBe("revision")
+      expect(Array.isArray(result.metadata.questions)).toBe(true)
+      expect(Array.isArray(result.metadata.answers)).toBe(true)
+    }).pipe(Effect.provide(provideDesign)),
+  )
+
+  it.instance("request approval returns metadata for first-stage approval", () =>
+    Effect.gen(function* () {
+      const approvalTool = yield* GraphAgentDesignTools.DesignRequestApprovalTool
+      const ctx = makeCtx()
+      const question = yield* Question.Service
+
+      const fiber = yield* (yield* Tool.init(approvalTool))
+        .execute({ summary: "新增船战系统核心概念" }, ctx)
+        .pipe(Effect.forkScoped)
+      const item = yield* pendingQuestion(question)
+      expect(item.questions[0]?.question).toContain("[design-approval]")
+      yield* question.reply({ requestID: item.id, answers: [["Approve"]] })
+
+      const result = yield* Fiber.join(fiber)
+      expect(result.metadata.result).toBe("approve")
+      expect(Array.isArray(result.metadata.questions)).toBe(true)
+      expect(Array.isArray(result.metadata.answers)).toBe(true)
+    }).pipe(Effect.provide(provideDesign)),
+  )
+
+  it.instance("request approval uses force option when has_issues is true", () =>
+    Effect.gen(function* () {
+      const approvalTool = yield* GraphAgentDesignTools.DesignRequestApprovalTool
+      const ctx = makeCtx()
+      const question = yield* Question.Service
+
+      const fiber = yield* (yield* Tool.init(approvalTool))
+        .execute({ summary: "有问题的变更", warnings: "发现孤立节点", has_issues: true }, ctx)
+        .pipe(Effect.forkScoped)
+      const item = yield* pendingQuestion(question)
+      expect(item.questions[0]?.options.some((o) => o.label === "Force")).toBe(true)
+      yield* question.reply({ requestID: item.id, answers: [["Force"]] })
+
+      const result = yield* Fiber.join(fiber)
+      expect(result.metadata.result).toBe("force")
     }).pipe(Effect.provide(provideDesign)),
   )
 
