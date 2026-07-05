@@ -153,6 +153,24 @@ const render = createMemo(() => {
 
 `designInternalToolInfo` 中 `design_finalize_change` 的映射不再使用，因为专用渲染器会覆盖。可以保留或移除，建议移除以避免歧义。
 
+## GUI 说明
+
+### 标题
+
+| 阶段 | Dock 标题 |
+|---|---|
+| 初稿 | 🧭 设计变更方向审批 |
+| 终稿 | 🔒 设计变更终稿确认 |
+
+### 交互
+
+两个阶段共享同一套 DockPrompt 容器和选项交互，统一为 Question 面板模式：
+
+- 用户在选项列表中选择一项（单选）。
+- 选择"修订"时展开多行输入框。
+- 右下角只有一个"提交"按钮，没有独立的"拒绝"按钮。
+- 提交时根据所选选项发送对应的 answer。
+
 ## 权限设计
 
 `packages/opencode/src/agent/agent.ts` 中 `designGraphPermissions`：

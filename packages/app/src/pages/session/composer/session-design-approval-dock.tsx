@@ -236,11 +236,6 @@ export const SessionDesignApprovalDock: Component<{ request: QuestionRequest; on
     return language.t("session.designApproval.title")
   })
 
-  const dismissLabel = createMemo(() => {
-    if (stage() === "final") return displayLabel("Abandon")
-    return displayLabel("Reject")
-  })
-
   const picked = (label: string) => store.selected === label
 
   return (
@@ -250,9 +245,6 @@ export const SessionDesignApprovalDock: Component<{ request: QuestionRequest; on
       header={<div data-slot="question-header-title">{title()}</div>}
       footer={
         <div data-slot="question-footer">
-          <Button variant="ghost" size="large" disabled={sending()} onClick={dismiss}>
-            {dismissLabel()}
-          </Button>
           <div data-slot="question-footer-actions">
             <Button variant="primary" size="large" disabled={sending()} onClick={submit}>
               {language.t("common.submit")}
