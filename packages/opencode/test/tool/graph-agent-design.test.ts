@@ -1,4 +1,4 @@
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { Effect, Fiber, Layer, Queue } from "effect"
 import { testEffect } from "../lib/effect"
 import { Design } from "../../src/design/design"
@@ -12,6 +12,7 @@ import { MessageID, SessionID } from "../../src/session/schema"
 import { testInstanceStoreLayer } from "../fixture/fixture"
 import { Question } from "../../src/question"
 import { EventV2Bridge } from "../../src/event-v2-bridge"
+import { GraphAgent } from "../../src/design/agent/types"
 
 const testDesignLayer = Design.layer().pipe(Layer.provide(DesignStore.defaultLayer))
 
@@ -370,6 +371,21 @@ describe("GraphAgent internal design tools", () => {
       expect(result.metadata.result).toBe("force")
     }).pipe(Effect.provide(provideDesign)),
   )
+
+  test("output type accepts change-forced", () => {
+    const output: GraphAgent.Output = {
+      type: "change-forced",
+      summary: "用户强制推进后应用了变更",
+      appliedChange: {
+        version: 1,
+        affectedNodes: ["节点 A"],
+        affectedEdges: [],
+        affectedContexts: ["上下文 A"],
+        summary: "在 Force 模式下过滤了矛盾边后应用",
+      },
+    }
+    expect(output.type).toBe("change-forced")
+  })
 
   it.instance("apply and clear queued changes via service", () =>
     Effect.gen(function* () {

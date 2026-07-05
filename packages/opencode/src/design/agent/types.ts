@@ -96,7 +96,7 @@ export interface Insight {
 }
 
 export interface Output {
-  type: "cognition" | "change-applied" | "abandoned" | "rejected" | "needs-clarification"
+  type: "cognition" | "change-applied" | "change-forced" | "abandoned" | "rejected" | "needs-clarification"
   summary: string
   insights?: Insight[]
   proposal?: {
