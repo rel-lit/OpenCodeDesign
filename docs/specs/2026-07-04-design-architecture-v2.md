@@ -30,7 +30,7 @@ GraphAgent 是 ChatAgent 的设计认知外脑。它是唯一能直接理解图�
 3. **GraphAgent 返回给 ChatAgent 的永远是设计认知（自然语言 + 结构化洞察），不是原始图数据。**
 4. **活跃工作集是 GraphAgent 的 Cache，由系统自动控制。**
 5. **审批是系统级写入闸门，由 GraphAgent subagent 在子会话中发起；question 事件会自动冒泡到父会话 composer，用户在父会话中作答。**
-6. **设计变更审批分为两个阶段：初稿审批（judge）确定变更方向，细化模式（refine）通过 Question 面板逐个敲定细节，终稿提交工具在用户同意后自动提交所有临时变更。**
+6. **审批通过后，GraphAgent subagent 内部进入执行模式完成写入；拒绝或修订则终止子 Agent，由 ChatAgent 引导下一轮讨论。**
 7. **每次成功的图变更都产生逻辑版本，并刷新 ChatAgent 对设计的认知。**
 
 ## Agent 角色
@@ -51,8 +51,8 @@ GraphAgent 是 ChatAgent 的设计认知外脑。它是唯一能直接理解图�
 - 职责：
   1. **设计认知供给**：根据 ChatAgent 的问题，在图中分析相关概念，返回自然语言摘要和洞察。
   2. **设计分析**：检查命名冲突、关系合理性、原则一致性、可合并项、隐含关系等。
-  3. **变更提案与初稿审批（judge 模式）**：把 ChatAgent 的自然语言意图转化为 Change Plan，在子会话中调用审批面板请求用户对变更方向的确认；根据用户选择进入细化、终止或重新分析。
-  4. **细化与终稿提交（refine 模式 + 终稿提交工具）**：基于已审批的 Change Plan，通过 Question 面板逐个敲定细节，累积到临时 accumulator，最后通过终稿提交工具请求用户确认并自动落库。
+  3. **变更提案与审批（judge 模式）**：把 ChatAgent 的自然语言意图转化为 Change Plan，在子会话中调用 `question.ask` 请求用户审批；根据用户选择直接执行或返回给 ChatAgent。
+  4. **执行写入（execute 模式）**：基于已审批的 Change Plan 展开细节并写入图数据库。
   5. **后置审查**：Visual Editor 直接保存后，审查改动并给出建议。
 
 ### GraphAgent 子职责
@@ -73,38 +73,33 @@ GraphAgent 是同一个 subagent（`design-graph`），但根据调用时的 `mo
 - 行为：
   1. 读图分析。
   2. 把自然语言意图转化为**变更计划（Change Plan）**——只描述核心设计决策，不展开完整节点/边字段。
-  3. 检查冲突、重复、孤立、无效原型使用，并判断是否存在明显问题。
-  4. 调用审批面板（`question.ask`）向用户展示变更分析并请求审批。根据是否存在明显问题，提供互斥的"同意变更"或"强行变更"选项。
+  3. 检查冲突、重复、孤立、无效原型使用。
+  4. 调用 `question.ask` 向用户展示变更计划并请求审批。
   5. 根据用户回答：
-     - **同意变更**：进入 `refine` 模式，通过 Question 面板逐个敲定细节。
-     - **强行变更**：进入 `refine` 模式，但 GraphAgent 在后续细化中被授权自主合理化方案，不反复征求用户意见。
-     - **拒绝变更**：终止子 Agent，返回 `rejected` 及 GraphAgent 提供的分析文本；ChatAgent 据此引导用户重新讨论，直到可以发起下一次审批。
-     - **修订变更**：基于用户输入的修改建议重新分析，再次调用初稿审批面板。
+     - **Apply**：内部转入 `execute` 模式，展开 Change Plan 细节并写入图数据库，返回 `change-applied`。
+     - **Reject**：终止子 Agent，返回 `rejected` 及理由；ChatAgent 据此引导用户重新讨论，直到可以发起下一次审批。
+     - **Revise**：终止子 Agent，返回 `needs-clarification` 及用户的修改意见；ChatAgent 继续对话澄清意图，然后再次调用 `design_request_change(newIntent)` 发起新一轮审批。
+- **不生成完整 GraphDelta，但审批通过后会负责执行写入。**
 
-#### 3. 细化模式（`refine`）
+#### 3. 执行模式（`execute`）
 
-- 触发：由 `judge` 模式在子会话内部调用。初稿审批通过后进入细化阶段。
+- 触发：由 `judge` 模式在子会话内部调用。用户选择 Apply 后，judge 不终止子 Agent，而是直接转入 execute 模式完成写入。
 - 输入：已经审批通过的变更计划（Change Plan）。
 - 行为：
-  1. 基于已审批的计划，在子会话中通过 Question 面板逐个细节询问用户：
+  1. 基于已审批的计划，在子会话中一步步展开细节：
      - 确定每个概念的具体名称、语义描述、别名。
      - 确定每条关系的原型、参数、语义描述。
      - 确定是否需要新建上下文或关系原型。
-  2. 每个细节确定后，调用语义化写工具把细节变成图变更，并累积到子会话私有的临时 accumulator。
-  3. 所有细节敲定后，调用终稿提交工具，向用户展示所有待提交变更的具体细节。
-  4. 根据用户回答：
-     - **同意**：工具自动提交临时 accumulator 中所有变更，成功后 bump 版本，返回 `change-applied` 及变更说明文本。
-     - **废弃变更，选择退出**：终止子 Agent，返回 `abandoned` 及 GraphAgent 提供的变更细节；临时 accumulator 被丢弃。
-     - **修订**：用户必须填写修订内容，提交后 GraphAgent 继续通过 Question 面板敲定修订细节，然后再次调用终稿提交工具。
-- 输出：`change-applied` 或 `abandoned` 类型结果。
+  2. 调用语义化写工具把这些细节变成图变更。
+  3. 所有细节展开完成后，统一通过 `Design.applyRawDelta` 提交到数据库。
+  4. bump version。
+- 输出：`change-applied` 类型结果。
 
-**为什么分计划、细化和终稿确认**
+**为什么分计划和执行**
 
 - 图是高级文档，节点和边包含大量自然语言描述、语义约束、别名等信息。
-- 初稿审批时用户只能也没必要审完整 delta；审的是"要不要做这个设计方向"。
-- 细化阶段通过 Question 面板逐个敲定具体字段，确保图的质量。
-- 终稿审批让用户在变更真正落库前再次确认所有细节，避免误操作。
-- 临时 accumulator 保证所有变更要么整体提交，要么整体丢弃。
+- 审批时用户只能也没必要审完整 delta；审的是"要不要做这个设计方向"。
+- 执行阶段再慢慢敲定细节，但必须在已审批的计划约束内进行，避免与审批意图自相矛盾。
 
 #### 4. 摘要模式（`summarize`）
 
@@ -251,7 +246,7 @@ GraphAgent 作为 subagent，接收一个自然语言请求 + 系统层提供的
 ```typescript
 interface DesignGraphSubagentInput {
   // 请求类型，决定 GraphAgent 以什么模式工作
-  mode: "cognition" | "judge" | "refine" | "summarize" | "review-save"
+  mode: "cognition" | "judge" | "execute" | "summarize" | "review-save"
 
   // ChatAgent 的自然语言请求
   request: string
@@ -267,7 +262,7 @@ interface DesignGraphSubagentInput {
   // 用于检测 GraphAgent 读图期间图是否被其他来源修改
   knownVersion?: number
 
-  // judge 模式内部切 refine 模式时传递已批准的 Change Plan
+  // judge 模式内部切 execute 模式时传递已批准的 Change Plan
   changePlan?: ChangePlan
 
   // 仅在 review-save 模式下需要
@@ -280,8 +275,8 @@ interface DesignGraphSubagentInput {
 | 模式 | 触发方式 | GraphAgent 行为 |
 |---|---|---|
 | `cognition` | `design_ask_graph` | 分析问题，在图中寻找相关概念，返回设计认知 |
-| `judge` | `design_request_change` | 把自然语言意图转成 Change Plan，调用审批面板请求用户对变更方向的确认 |
-| `refine` | `judge` 模式内部调用 | 基于已审批的 Change Plan，通过 Question 面板敲定细节并累积到临时 accumulator |
+| `judge` | `design_request_change` | 把自然语言意图转成 Change Plan，向用户请示，批准后内部进入 execute 执行 |
+| `execute` | `judge` 模式内部调用 | 基于已审批的 Change Plan 调用写工具执行变更 |
 | `summarize` | `design_summarize_design` | 基于活跃工作集生成自然语言摘要 |
 | `review-save` | Visual Editor 保存后 | 审查已发生的改动，返回建议 |
 
@@ -293,10 +288,9 @@ GraphAgent 返回的是设计认知，不是原始图数据。
 interface DesignGraphSubagentOutput {
   type:
     | "cognition"           // 返回设计认知
-    | "change-applied"      // refine 模式终稿确认后已执行变更
-    | "abandoned"           // 用户在终稿审批阶段废弃变更，子 Agent 已终止
-    | "rejected"            // 用户在初稿审批阶段拒绝变更，子 Agent 已终止
-    | "needs-clarification" // 用户在初稿审批阶段要求修订，子 Agent 已终止
+    | "change-applied"      // judge 模式内 Apply 后已执行变更
+    | "rejected"            // 用户拒绝，子 Agent 已终止
+    | "needs-clarification" // 用户要求修订，子 Agent 已终止
 
   // 面向 ChatAgent 的自然语言摘要
   summary: string
@@ -309,7 +303,7 @@ interface DesignGraphSubagentOutput {
     references?: string[]   // 引用的节点 ID（GraphAgent 内部使用，ChatAgent 不需要理解）
   }>
 
-  // judge 模式内部使用：把已生成的 Change Plan 传给 refine 模式
+  // judge 模式内部使用：把已生成的 Change Plan 传给 execute 模式
   proposal?: {
     intent: string          // 设计意图
     rationale: string       // 设计理由
@@ -321,7 +315,7 @@ interface DesignGraphSubagentOutput {
     }>
     affectedNodes: string[]
     affectedEdges: string[]
-    plan: ChangePlan        // 已审批通过的变更计划，refine 模式基于此展开细节
+    plan: ChangePlan        // 已审批通过的变更计划，execute 模式基于此展开细节
   }
 
   // 当 type 为 change-applied 时，返回已应用变更的摘要，用于同步活跃工作集和 ChatAgent 认知
@@ -341,12 +335,11 @@ interface DesignGraphSubagentOutput {
 输出类型说明：
 
 - `cognition`：返回设计认知。如果 `questions` 非空，ChatAgent 应先回答这些问题或向用户澄清，再继续。
-- `change-applied`：初稿审批通过并经过细化后，终稿提交工具成功提交所有临时变更。`appliedChange` 字段携带变更摘要，系统层据此更新活跃工作集，ChatAgent 据此刷新认知。
-- `abandoned`：用户在终稿审批阶段选择废弃变更，子 Agent 已终止，返回值包含 GraphAgent 提供的变更细节。
-- `rejected`：用户在初稿审批阶段拒绝变更，子 Agent 已终止，返回值包含 GraphAgent 提供的分析文本。
-- `needs-clarification`：用户在初稿审批阶段要求修订，子 Agent 已终止，附带用户修改意见。ChatAgent 继续与用户沟通，重新生成意图后再次调用 `design_request_change(newIntent)` 发起新一轮审批。
+- `change-applied`：变更已成功执行（judge 模式内 Apply 后转入 execute 完成）。`appliedChange` 字段携带变更摘要，系统层据此更新活跃工作集，ChatAgent 据此刷新认知。
+- `rejected`：用户拒绝，子 Agent 已终止。
+- `needs-clarification`：用户要求修订，子 Agent 已终止，附带用户修改意见。
 
-`proposal` 字段不返回给 ChatAgent；它只在 judge 模式内部切 refine 模式时传递已批准的 Change Plan。
+`proposal` 字段不返回给 ChatAgent；它只在 judge 模式内部切 execute 模式时传递已批准的 Change Plan。
 
 ### 变更计划（Change Plan）
 
@@ -473,10 +466,10 @@ GraphAgent 的工具面向**设计语义**，不是原始图数据操作。底�
 
 ### 写工具与 delta 的关系
 
-- refine 模式根据已审批的 Change Plan 调用这些语义化工具。
+- execute 模式根据已审批的 Change Plan 调用这些语义化工具。
 - 每个工具内部生成对应的 delta 片段。
-- refine 模式维护一个待提交 delta accumulator。
-- 所有细节敲定完成后，调用终稿提交工具向用户展示完整变更；用户同意后自动提交 accumulator。
+- execute 模式维护一个待提交 delta accumulator。
+- 所有细节展开完成后，一次性调用 `Design.applyRawDelta` 提交。
 - 提交成功后 bump version。
 
 这样用户可以在 GraphAgent subagent 标签页中看到"定义概念 UserService"、"建立 UserService depends_on OrderService"等可读的执行步骤，而不是抽象的 delta 字段。
@@ -503,44 +496,34 @@ GraphAgent 的工具面向**设计语义**，不是原始图数据操作。底�
 ```
 用户："空间维度可以按前后左右来设计吗？"
   → ChatAgent：用户想修改设计
-    → ChatAgent 整理所有设计需求，调用 design_request_change("将空间维度按方向有意义的原则划分为前方、侧翼、后方。意图：... 方向：... 建议：... 细节：...")
+    → ChatAgent 调用 design_request_change("将空间维度按方向有意义的原则划分为前方、侧翼、后方")
       → 系统层：构建临时工作集（从活跃工作集快照复制）
         → task({ subagent_type: "design-graph", mode: "judge" })
           → GraphAgent 审批模式分析意图
             → 通过工具查询/扩展临时工作集
-              → 生成 Change Plan + 分析说明
-                → 调用审批面板（事件冒泡到父会话 composer）
-                  → 用户在父会话 composer 中看到"同意变更 / 强行变更 / 修订变更 / 拒绝变更"
-                    → 同意变更 / 强行变更：
-                      → GraphAgent 内部转入 refine 模式
-                        → 通过 Question 面板逐个敲定细节
+              → 生成 Change Plan + 设计理由
+                → 调用 question.ask（事件冒泡到父会话 composer）
+                  → 用户在父会话 composer 中选择 Apply / Reject / Revise
+                    → Apply:
+                      → GraphAgent 内部转入 execute 模式
+                        → 基于 plan 展开细节
                           → 调用语义化写工具
-                            → 累积 delta 片段到临时 accumulator
-                              → 调用终稿提交工具
-                                → 用户在父会话 composer 中看到"同意 / 废弃变更，选择退出 / 修订"
-                                  → 同意：
-                                    → 终稿工具自动提交所有临时变更
-                                      → bump version
-                                        → 返回 change-applied（携带 appliedChange 摘要）
-                                          → 系统层用 appliedChange 更新活跃工作集
-                                            → ChatAgent 总结结果
-                                  → 废弃变更，选择退出：
-                                    → 终止 subagent
-                                      → 返回 abandoned + 变更细节
-                                        → ChatAgent 向用户说明变更已放弃
-                                  → 修订：
-                                    → 用户必须填写修订内容
-                                      → GraphAgent 继续通过 Question 面板敲定修订细节
-                                        → 再次调用终稿提交工具
-                    → 拒绝变更：
+                            → 累积 delta 片段
+                              → 统一 Design.applyRawDelta(delta)
+                                → bump version
+                                  → 返回 change-applied（携带 appliedChange 摘要）
+                                    → 系统层用 appliedChange 更新活跃工作集
+                                      → ChatAgent 总结结果
+                    → Reject:
                       → 终止 subagent
-                        → 返回 rejected + GraphAgent 分析文本
+                        → 返回 rejected + 理由
                           → ChatAgent 向用户说明变更被拒绝，引导重新讨论
                             → 直到达成新意图，再次调用 design_request_change
-                    → 修订变更：
-                      → 用户填写/覆盖默认修订说明
-                        → GraphAgent 基于修改建议重新分析
-                          → 再次调用初稿审批面板
+                    → Revise:
+                      → 终止 subagent
+                        → 返回 needs-clarification + 用户修改意见
+                          → ChatAgent 与用户沟通，重新生成意图
+                            → 再次调用 design_request_change
 ```
 
 ### 图摘要请求
@@ -635,58 +618,7 @@ execute: (args, ctx) =>
       metadata: { output },
     }
   })
-)
 ```
-
-### 终稿提交工具
-
-```typescript
-interface DesignFinalizeChangeParameters {}
-```
-
-实现：
-
-```typescript
-execute: (args, ctx) =>
-  Effect.gen(function* () {
-    const state = yield* design.getAccumulatedGraphState(ctx.sessionID)
-    const summary = yield* design.summarizeGraphState(state)
-    // 向用户展示所有待提交变更细节
-    const approved = yield* question.ask({
-      header: "[design-approval] 设计变更终稿确认",
-      question: "## 待提交变更详情\n" + summary,
-      options: [
-        { label: "同意", description: "提交所有变更" },
-        { label: "废弃变更，选择退出", description: "放弃所有临时变更" },
-        { label: "修订", description: "我需要修改某些细节" },
-      ],
-      custom: true, // 修订选项必填
-      metadata: { designApproval: true, stage: "finalize" },
-    })
-    if (approved === "同意") {
-      yield* design.applyAccumulatedChanges(ctx.sessionID)
-      return {
-        title: "Changes applied",
-        output: "All changes have been applied to the design graph.",
-      }
-    }
-    if (approved === "废弃变更，选择退出") {
-      yield* design.clearAccumulatedChanges(ctx.sessionID)
-      return {
-        title: "Changes abandoned",
-        output: "All pending changes have been discarded.",
-      }
-    }
-    // "修订" 返回需要继续细化的信号
-    return {
-      title: "Revision requested",
-      output: "Please provide revision details.",
-      metadata: { revision: true },
-    }
-  })
-```
-
-该工具是 GraphAgent subagent 内部工具，不暴露给 ChatAgent。它在 refine 模式末尾被调用，负责把临时 accumulator 中的变更呈现给用户，并在用户同意后自动提交。
 
 ### `design_summarize_design`
 
@@ -700,90 +632,41 @@ interface DesignSummarizeDesignParameters {}
 
 审批是**系统级写入闸门**，由 **GraphAgent subagent 在子会话中发起**。OpenCode 的 `question.ask` 事件会自动从子会话冒泡到父会话 composer，因此用户在父会话 composer 中就能看到并回答子 Agent 提出的问题。
 
-设计变更审批分为**两个阶段**：
-1. **初稿审批（Judge）**：GraphAgent 根据 ChatAgent 传递的设计需求描述，分析整体意图、影响范围，向用户请求对变更方向的确认。
-2. **终稿审批（Finalize）**：GraphAgent 在子会话中通过 Question 面板逐个敲定细节后，将所有待提交的变更累积在临时区，再向用户展示完整细节并请求最终确认。
+### 审批流程
 
-两个阶段使用**同一个审批面板 GUI 组件/服务**，但由**不同的工具调用**触发。
-
-### 阶段一：初稿审批（Judge）
-
-1. ChatAgent 整理用户聊天中得到的所有设计需求，形成条理清晰的变更描述（包含意图、方向、建议、细节等）。
-2. ChatAgent 调用 `design_request_change(intent)` 启动 `design-graph` subagent。
-3. 系统层从活跃工作集快照复制初始临时工作集，并注入系统辅助分析。
-4. GraphAgent 以 `judge` 模式分析意图，通过工具查询/扩展临时工作集，生成 Change Plan 与分析说明。
-5. GraphAgent 在子会话中调用审批面板（`question.ask`），问题事件冒泡到父会话 composer。
-6. 用户在父会话 composer 中看到审批面板，展示 GraphAgent 对变更的分析、Change Plan 摘要、可能的问题与警告。
-7. 面板提供四个选项，但以下两类互斥：
-   - **同意变更**：仅在 GraphAgent 未发现明显问题时出现。用户确认后进入阶段二细化。
-   - **强行变更**：仅在 GraphAgent 发现明显问题时出现。用户认可变更方向，但授权 GraphAgent 在后续细化中自主合理化方案，不再反复征求用户意见。
-   - **修订变更**：提供一个输入框，默认预填入一段基于用户视角的修订方向说明文本。用户可点击覆盖输入，提交后 GraphAgent 基于修改建议重新分析并再次调用初稿审批面板。
-   - **拒绝变更**：终止子 Agent，返回 `rejected` 及 GraphAgent 提供的分析文本；ChatAgent 据此引导用户重新讨论。
-8. 用户选择后需点击提交按钮确认。面板风格类似 Question 单选题面板，而非权限面板。
-
-### 阶段二：细化与终稿审批（Refine + Finalize）
-
-1. 初稿通过后，GraphAgent 进入细化模式，通过 **Question 面板**逐个细节询问用户，例如："‘船’的语义解释放什么内容？请选择已有选项或给出自己的看法。"
-2. 每个细节确定后，GraphAgent 调用对应的图变更 Tool（`design_define_concept`、`design_relate_concepts` 等），变更被计入子会话私有的临时 accumulator，不立即写入数据库。
-3. 所有细节敲定后、正式提交前，GraphAgent 调用**终稿提交工具**（与初稿审批共享同一 GUI 服务，但工具 ID 不同）。该工具展示所有临时区变更的具体细节。
-4. 终稿面板选项：
-   - **同意**：工具**自动提交**临时区所有变更，相当于内部调用 `design_apply_changes`。成功后 bump 版本，子代理返回 `change-applied` 及变更说明文本。
-   - **废弃变更，选择退出**：终止子 Agent，返回 `abandoned` 及 GraphAgent 提供的变更细节；临时区变更被丢弃。
-   - **修订**：输入框为必填项（终稿阶段不会预填入修订方向）。用户提交后，GraphAgent 继续通过 Question 面板敲定修订细节，然后再次调用终稿提交工具。
-5. 用户选择后需点击提交按钮确认。
+1. ChatAgent 调用 `design_request_change(intent)`。
+2. 系统层从活跃工作集快照复制初始临时工作集，并注入系统辅助分析。
+3. GraphAgent 以 `judge` 模式分析意图，通过工具查询/扩展临时工作集，生成 Change Plan。
+4. GraphAgent 在子会话中调用 `question.ask`，问题事件冒泡到父会话 composer。
+5. 用户在父会话 composer 中看到审批面板，展示 Change Plan 的 `intent`、`rationale` 和 `summary`，以及受影响的概念/关系摘要。
+6. 用户选择：
+   - **Apply**：GraphAgent 在子会话内部转入 `execute` 模式，展开 Change Plan 细节并写入图数据库；成功后 bump 版本，返回 `change-applied` 并携带 `appliedChange` 摘要。
+   - **Reject**：GraphAgent 终止子 Agent，返回 `rejected` 及理由；ChatAgent 据此引导用户重新讨论，直到可以发起下一次审批。
+   - **Revise**：GraphAgent 终止子 Agent，返回 `needs-clarification` 及用户的修改意见；ChatAgent 继续与用户沟通，重新生成意图后再次调用 `design_request_change(newIntent)` 发起新一轮审批。
 
 ### 为什么由 GraphAgent 直接提问
 
 - `sessionTreeRequest` 已确认子会话的 `question.ask` 会自动冒泡到父会话 composer。
 - 审批问题和执行写入都围绕同一个 Change Plan，由 GraphAgent 自己控制可以减少跨 Agent 传递时的理解差异。
-- ChatAgent 仍然是编排层：它决定何时调用 `design_request_change`，并在变更被拒绝、放弃或需要澄清时继续对话。
+- ChatAgent 仍然是编排层：它决定何时调用 `design_request_change`，并在变更被拒绝或需要澄清时继续对话。
 - 这样审批面板仍是系统 UI，只是驱动它的 Agent 是 GraphAgent 而非 ChatAgent。
 
-### 问题设计（初稿审批）
+### 问题设计
 
 ```typescript
 {
   questions: [{
-    header: "[design-approval] 设计变更审批",
-    question: "## 变更意图\n...\n## 分析说明\n...\n## 计划摘要\n...",
+    header: "Apply design change",
+    question: changePlan.intent + "\n\n" + changePlan.rationale + "\n\n" + changePlan.summary,
     options: [
-      { label: "同意变更", description: "确认此变更方向并进入细节细化" },
-      { label: "强行变更", description: "同意方向，授权 GraphAgent 自主合理化细节" },
-      { label: "拒绝变更", description: "放弃本次变更" },
-      { label: "修订变更", description: "我希望修改这个方案" }
+      { label: "Apply", description: "Apply this design change" },
+      { label: "Reject", description: "Reject this design change" },
+      { label: "Revise", description: "Let me revise the request" }
     ],
     custom: true  // 允许用户输入修改意见
   }]
 }
 ```
-
-- 当 GraphAgent 未发现明显问题时，选项中只出现 **同意变更**，不出现 **强行变更**。
-- 当 GraphAgent 发现明显问题时，选项中只出现 **强行变更**，不出现 **同意变更**。
-- **修订变更**的输入框默认预填入基于用户视角的修订方向说明。
-
-### 终稿提交工具设计
-
-终稿提交工具本质上是一次 `question.ask`，但服务端会识别其 metadata 标记，在用户选择同意后自动执行临时区变更提交。
-
-```typescript
-{
-  questions: [{
-    header: "[design-approval] 设计变更终稿确认",
-    question: "## 待提交变更详情\n...",
-    options: [
-      { label: "同意", description: "提交所有变更" },
-      { label: "废弃变更，选择退出", description: "放弃所有临时变更" },
-      { label: "修订", description: "我需要修改某些细节" }
-    ],
-    custom: true  // 修订选项必填
-  }],
-  metadata: { designApproval: true, stage: "finalize" }
-}
-```
-
-- 用户选择 **同意** 后，服务端自动将临时 accumulator 中的变更通过 `Design.applyRawDelta` 提交。
-- 用户选择 **废弃变更，选择退出** 后，临时 accumulator 被清空，子代理终止。
-- 用户选择 **修订** 后，必须填写输入框内容；GraphAgent 读取后回到 Question 面板继续细化。
 
 ### 执行模式说明
 
@@ -966,7 +849,7 @@ Visual Editor 仍然直接写 DB（raw save），因为 GUI 操作本身已是�
 | `design_ask_graph` 入口 | `design.ask_graph.start question=...` |
 | `design_request_change` 入口 | `design.request_change.start intent=...` |
 | `design_summarize_design` 入口 | `design.summarize_design.start` |
-| subagent 内部 judge → refine 切换 | `design-graph.mode.switch from=judge to=refine` |
+| subagent 内部 judge → execute 切换 | `design-graph.mode.switch from=judge to=execute` |
 | 启动 subagent | `design.subagent.launch mode=... subagent_type=design-graph` |
 | subagent 收到 prompt | `design-graph.subagent.start mode=... activeNodes=N` |
 | subagent 读图 | `design-graph.read tool=... args=...` |
@@ -1000,9 +883,7 @@ Visual Editor 仍然直接写 DB（raw save），因为 GUI 操作本身已是�
 
 1. 重写 `src/design/agent/prompt/graph.txt`：
    - 明确 subagent 是 ChatAgent 的设计认知外脑。
-   - 说明五种工作模式（cognition、judge、refine、summarize、review-save）。
-   - 说明 judge 模式的初稿审批面板交互（同意/强行/修订/拒绝）。
-   - 说明 refine 模式的 Question 面板细节询问与终稿提交工具。
+   - 说明五种工作模式（cognition、judge、execute、summarize、review-save）。
    - 说明可用工具集。
    - 强制最终输出为 JSON。
 
@@ -1011,8 +892,8 @@ Visual Editor 仍然直接写 DB（raw save），因为 GUI 操作本身已是�
 3. 实现 subagent 内部逻辑：
    - 解析 prompt 中的 mode。
    - `cognition` 模式：读图、扩展工作集、返回洞察。
-   - `judge` 模式：把自然语言意图转成 Change Plan，调用审批面板请求对变更方向的确认；批准后内部进入 `refine` 模式。
-   - `refine` 模式：基于已审批的 Change Plan，通过 Question 面板敲定细节，调用语义化写工具累积 delta，最后调用终稿提交工具请求用户确认并自动提交。
+   - `judge` 模式：把自然语言意图转成 Change Plan，调用 `question.ask` 请求审批；批准后内部进入 `execute` 模式执行写入。
+   - `execute` 模式：基于已审批的 Change Plan 展开细节，调用语义化写工具，累积 delta，统一提交。
    - `summarize` 模式：基于工作集生成摘要。
    - `review-save` 模式：审查 Visual Editor diff。
 
@@ -1097,8 +978,8 @@ Your users are:
 
 You work in one of these modes:
 - cognition: Answer a design question by analyzing the graph. Return natural language insights.
-- judge: Convert a natural language design intent into a structured change plan (NOT a full delta). The plan describes core design decisions only. Then call the approval panel (`question.ask`) to request user confirmation on the change direction. If the user agrees or forces, internally transition to refine mode. If the user rejects or wants to revise, terminate the subagent and return the corresponding result to ChatAgent so it can guide the next round.
-- refine: Receive an already-approved change plan. Expand the plan into detailed concept/relationship definitions by asking the user each specific detail through the Question panel. Each detail is written to a temporary accumulator via the semantic design tools. When all details are settled, call the finalize-change tool to present the full set of changes to the user. If the user agrees, the tool automatically commits the accumulator. If the user abandons, the accumulator is discarded. If the user revises, continue refining through the Question panel.
+- judge: Convert a natural language design intent into a structured change plan (NOT a full delta). The plan describes core design decisions only. Then call `question.ask` to request user approval. If the user approves, internally transition to execute mode and apply the change. If the user rejects or wants to revise, terminate the subagent and return the corresponding result to ChatAgent so it can guide the next round.
+- execute: Receive an already-approved change plan. Expand the plan into detailed concept/relationship definitions, then execute them using the semantic design tools.
 - summarize: Generate a natural language summary of the current design based on the active working set.
 - review-save: Review a diff from the Visual Editor and return suggestions.
 
@@ -1109,23 +990,19 @@ For judge mode:
 2. Build or extend the temporary working set.
 3. Generate a Change Plan that captures the core design decisions implied by the user's intent.
 4. Check for conflicts, duplicates, orphaned nodes, and invalid prototype usage.
-5. Decide whether there are obvious problems.
-6. Call the approval panel (`question.ask`) to present the Change Plan and your analysis to the user. The panel will surface in the parent session composer automatically.
-7. Wait for the user's answer.
-8. If 同意变更 (Approve): internally transition to refine mode.
-9. If 强行变更 (Force): internally transition to refine mode with the `force` flag set; you are authorized to rationalize details autonomously without repeatedly asking the user.
-10. If 拒绝变更 (Reject): terminate the subagent and return a JSON result with type "rejected". Include your analysis text in `summary` so ChatAgent can guide the user.
-11. If 修订变更 (Revise): read the user's revision text, re-analyze based on it, and call the approval panel again. If the user did not provide revision text, treat it as a no-op and ask again.
+5. Call `question.ask` to present the Change Plan to the user. The question will surface in the parent session composer automatically.
+6. Wait for the user's answer.
+7. If Apply: internally transition to execute mode, expand the plan, and apply the delta.
+8. If Reject: terminate the subagent and return a JSON result with type "rejected". Include the rationale in `summary` so ChatAgent can guide the user toward a revised request.
+9. If Revise: terminate the subagent and return a JSON result with type "needs-clarification". Include the user's revision text in `summary`. ChatAgent will continue the conversation and may start a new `design_request_change` round.
 
-For refine mode:
-1. Receive the approved Change Plan (and the optional `force` flag).
-2. Ask the user each specific detail through the Question panel, e.g. "What should the semantic description of 'Ship' contain?".
-3. For each settled detail, call the appropriate semantic design tool to add the change to the temporary accumulator.
-4. When all details are settled, call the finalize-change tool to present the full pending changes to the user.
-5. Wait for the user's answer.
-6. If 同意 (Agree): the tool automatically commits all accumulated changes, bumps the graph version, and returns a JSON result with type "change-applied". Include `appliedChange` with the version, affected nodes/edges/contexts, and a human-readable summary.
-7. If 废弃变更，选择退出 (Abandon): terminate the subagent and return a JSON result with type "abandoned". Include the details you previously showed to the user in `summary`.
-8. If 修订 (Revise): the user must provide revision text. Read the text, then continue refining through the Question panel and call the finalize-change tool again.
+For execute mode:
+1. Receive the approved Change Plan.
+2. Expand the plan into detailed concept definitions, relation definitions, semantics, aliases, etc.
+3. Use the semantic design tools to build up the corresponding GraphDelta.
+4. Apply the complete delta through Design.applyRawDelta.
+5. Bump the graph version.
+6. Return a JSON result with type "change-applied". Include `appliedChange` with the version, affected nodes/edges/contexts, and a human-readable summary so the system layer can synchronize the active working set and ChatAgent can update its cognition.
 
 Your final response must be a single JSON object matching the output schema. Do not wrap it in markdown.
 ```
