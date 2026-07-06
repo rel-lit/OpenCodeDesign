@@ -11,15 +11,104 @@
 
 所有读工具都基于 **Design Change Buffer 合并后的状态**，即能看到 buffer 中待创建/待修改但尚未提交的内容。
 
-| 工具 | 行为 |
-|---|---|
-| `design_get_temporary_working_set` | 返回当前子代理 session 的临时工作集摘要 |
-| `design_search_graph` | 按名称/别名搜索 concept 或 context，匹配结果加入临时工作集 |
-| `design_expand_node` | 展开指定 concept 的一跳邻居，邻居加入临时工作集 |
-| `design_get_concept` | 返回 concept 的语义、context、关系、邻居 |
-| `design_get_context` | 返回 context 及其包含的 concepts |
-| `design_get_state_summary` | 返回图规模统计 |
-| `design_list_prototypes` | 返回所有关系原型列表 |
+读工具遵循**分层信息披露**原则：
+- **发现类工具**返回概要，并把结果加入临时工作集。
+- **单个 get 工具**返回查询对象自身的完整内容，但其指向的外部实体只给概要（名称替换 ID）。
+- **关系/原型专用查询工具**返回对应内容的完整详情。
+- **概要中保留自身 ID**，便于后续用 ID 精确查询。
+- **指向外部实体的 ID 替换为名称**，避免 GraphAgent 被大量内部 ID 淹没。
+
+| 工具 | 行为 | 返回层级 |
+|---|---|---|
+| `design_get_temporary_working_set` | 返回当前子代理 session 的临时工作集摘要 | 工作集条目概要 |
+| `design_search_graph` | 按名称/别名搜索 concept 或 context，匹配结果加入临时工作集 | 匹配项概要（含自身 ID） |
+| `design_expand_node` | 展开指定 concept 的一跳邻居，邻居加入临时工作集 | 邻居概要 + 关系概要（含自身 ID） |
+| `design_get_context` | 返回单个 context 的完整语义及其包含的 concepts 列表 | context 自身完整内容；concepts 只给概要（含 ID） |
+| `design_get_concept` | 返回单个 concept 的完整语义及其关系列表 | concept 自身完整内容；relations 只给概要（含 ID） |
+| `design_get_relation` | 返回指定两个 concept 之间关系的完整内容 | edge 完整内容（含自身 from/to 名称和 ID，prototype 名称和 ID，parameters） |
+| `design_get_state_summary` | 返回图规模统计 | 统计数字 |
+| `design_list_prototypes` | 返回所有关系原型列表 | 列表概要（含 ID） |
+| `design_get_prototype` | 返回单个关系原型的完整内容 | prototype 自身完整内容 |
+
+### 输出格式约定
+
+#### 概要条目
+
+发现类工具返回的每个条目包含：
+
+```ts
+{
+  id: string      // 自身 ID，保留
+  name: string    // 名称
+  type: "context" | "node" | "prototype"
+  briefSemantics: string  // 简短语义
+}
+```
+
+#### `design_get_context` 输出示例
+
+```
+Context: 战斗系统 (ctx-abc123)
+Semantics: 游戏核心战斗机制，包含玩家、敌人、技能、伤害计算等。
+
+Concepts:
+- 船 (node-xyz789): 玩家操控的水上载具
+- 武器 (node-uvw456): 可装备的攻击性物品
+```
+
+注意：context 自身的 ID 保留；下面的 concepts 只给名称和自身 ID，**concept 的 contextId 等外部引用 ID 已被替换为 context 名称**。
+
+#### `design_get_concept` 输出示例
+
+```
+Concept: 船 (node-xyz789)
+Context: 战斗系统         ← contextId 替换为名称
+Kind: entity
+Aliases: 飞船
+Semantics: 玩家操控的水上载具，可装备武器，有耐久度。
+
+Relations:
+- 船 --[属于]--> 战斗系统     ← prototypeId / nodeId 替换为名称
+- 船 --[装备]--> 武器
+```
+
+注意：concept 自身的 ID 保留；relations 中外部实体的 ID 替换为名称。每条关系只显示概要，不展开 `parameters`。
+
+#### `design_get_relation` 输出示例
+
+```
+Relation: 船 --[装备]--> 武器
+From: 船 (node-xyz789)
+To: 武器 (node-uvw456)
+Prototype: 装备 (proto-def012)
+Semantics: 船可以装备武器作为攻击性组件
+Parameters:
+  maxSlots: 4
+  slotTypes: ["主炮", "副炮"]
+```
+
+注意：relation 自身的 from/to/prototype ID 保留，同时提供名称。**只保留查询对象（这条 edge）直接关联的 ID，其他外部引用若存在也替换为名称**。
+
+#### `design_get_prototype` 输出示例
+
+```
+Prototype: 装备 (proto-def012)
+Default semantics: 一个实体可以装备另一个实体作为组件
+Parameter schema:
+  maxSlots: number
+  slotTypes: string[]
+```
+
+### `search` 与 `get` 的区别
+
+| 维度 | `design_search_graph` / `design_expand_node` | `design_get_context` / `design_get_concept` / `design_get_relation` / `design_get_prototype` |
+|---|---|---|
+| 目的 | 发现、定位 | 深入了解单个对象 |
+| 查询条件 | 名称/别名/节点 | ID 或精确名称 |
+| 返回数量 | 多个匹配项 | 单个对象 |
+| 是否加入工作集 | 是 | 否 |
+| 返回内容 | 概要 | 查询对象自身完整，关联对象概要 |
+
 
 ---
 
