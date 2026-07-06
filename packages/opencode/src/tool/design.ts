@@ -907,8 +907,8 @@ export const DesignWithdrawConceptTool = Tool.define<
 )
 
 const RelateConceptsParameters = Schema.Struct({
-  from: Schema.String.annotate({ description: "Source concept name or ID" }),
-  to: Schema.String.annotate({ description: "Target concept name or ID" }),
+  left: Schema.String.annotate({ description: "Left concept name or ID (unordered endpoint)" }),
+  right: Schema.String.annotate({ description: "Right concept name or ID (unordered endpoint)" }),
   relation: Schema.String.annotate({ description: "Relation prototype name or ID" }),
   semantics: Schema.optional(Schema.String).annotate({ description: "Relation semantics override" }),
   constraints: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)).annotate({ description: "Relation parameters" }),
@@ -928,13 +928,13 @@ export const DesignRelateConceptsTool = Tool.define<
       execute: (args, ctx) =>
         Effect.gen(function* () {
           const state = yield* design.getState()
-          const fromNode = yield* findNodeByNameOrIdWithBuffer(design, ctx.sessionID, args.from)
-          if (!fromNode) {
-            return { title: "Source concept not found", output: `No concept matching "${args.from}"`, metadata: {} }
+          const leftNode = yield* findNodeByNameOrIdWithBuffer(design, ctx.sessionID, args.left)
+          if (!leftNode) {
+            return { title: "Left concept not found", output: `No concept matching "${args.left}"`, metadata: {} }
           }
-          const toNode = yield* findNodeByNameOrIdWithBuffer(design, ctx.sessionID, args.to)
-          if (!toNode) {
-            return { title: "Target concept not found", output: `No concept matching "${args.to}"`, metadata: {} }
+          const rightNode = yield* findNodeByNameOrIdWithBuffer(design, ctx.sessionID, args.right)
+          if (!rightNode) {
+            return { title: "Right concept not found", output: `No concept matching "${args.right}"`, metadata: {} }
           }
           const prototype = yield* findPrototypeByNameOrIdWithBuffer(design, ctx.sessionID, args.relation)
           if (!prototype) {
@@ -942,47 +942,69 @@ export const DesignRelateConceptsTool = Tool.define<
           }
           const parameters: Record<string, unknown> = { ...(args.constraints ?? {}) }
           if (args.semantics !== undefined) parameters.semantics = args.semantics
-          const edgeKey = DesignTypes.edgeKey(fromNode.id, toNode.id)
+          const edgeKey = DesignTypes.edgeKey(leftNode.id, rightNode.id)
+
+          const operations = yield* design.bufferListOperations(ctx.sessionID)
+          const pendingEdge = operations.find(
+            (o) =>
+              (o.type === "create_edge" || o.type === "update_edge") &&
+              DesignTypes.edgeKey(
+                (o.payload as { leftNodeId: string; rightNodeId: string }).leftNodeId,
+                (o.payload as { leftNodeId: string; rightNodeId: string }).rightNodeId,
+              ) === edgeKey,
+          )
+
           const existingEdge = state.edges.find(
             (e) => DesignTypes.edgeKey(e.leftNodeId, e.rightNodeId) === edgeKey,
           )
-          const op = existingEdge
+
+          const op = pendingEdge
             ? yield* design.bufferAddOperation(ctx.sessionID, {
                 type: "update_edge",
-                description: `Update relation ${fromNode.name} --[${prototype.name}]-- ${toNode.name}`,
+                description: `Update relation ${leftNode.name} --[${prototype.name}]-- ${rightNode.name}`,
                 payload: {
-                  leftNodeId: existingEdge.leftNodeId,
-                  rightNodeId: existingEdge.rightNodeId,
+                  leftNodeId: (pendingEdge.payload as { leftNodeId: string; rightNodeId: string }).leftNodeId,
+                  rightNodeId: (pendingEdge.payload as { leftNodeId: string; rightNodeId: string }).rightNodeId,
                   patch: { prototypeId: prototype.id, parameters },
                 },
               })
-            : yield* design.bufferAddOperation(ctx.sessionID, {
-                type: "create_edge",
-                description: `Create relation ${fromNode.name} --[${prototype.name}]-- ${toNode.name}`,
-                payload: {
-                  leftNodeId: fromNode.id,
-                  rightNodeId: toNode.id,
-                  prototypeId: prototype.id,
-                  parameters,
-                },
-              })
+            : existingEdge
+              ? yield* design.bufferAddOperation(ctx.sessionID, {
+                  type: "update_edge",
+                  description: `Update relation ${leftNode.name} --[${prototype.name}]-- ${rightNode.name}`,
+                  payload: {
+                    leftNodeId: existingEdge.leftNodeId,
+                    rightNodeId: existingEdge.rightNodeId,
+                    patch: { prototypeId: prototype.id, parameters },
+                  },
+                })
+              : yield* design.bufferAddOperation(ctx.sessionID, {
+                  type: "create_edge",
+                  description: `Create relation ${leftNode.name} --[${prototype.name}]-- ${rightNode.name}`,
+                  payload: {
+                    leftNodeId: leftNode.id,
+                    rightNodeId: rightNode.id,
+                    prototypeId: prototype.id,
+                    parameters,
+                  },
+                })
           yield* design.addTemporaryWorkingSetEntries(ctx.sessionID, [
             {
-              id: fromNode.id,
-              name: fromNode.name,
+              id: leftNode.id,
+              name: leftNode.name,
               type: "node",
-              briefSemantics: fromNode.defaultSemantics || "",
+              briefSemantics: leftNode.defaultSemantics || "",
             },
             {
-              id: toNode.id,
-              name: toNode.name,
+              id: rightNode.id,
+              name: rightNode.name,
               type: "node",
-              briefSemantics: toNode.defaultSemantics || "",
+              briefSemantics: rightNode.defaultSemantics || "",
             },
           ])
           return {
             title: "Related concepts",
-            output: `${fromNode.name} --[${prototype.name}]-- ${toNode.name} queued`,
+            output: `${leftNode.name} --[${prototype.name}]-- ${rightNode.name} queued`,
             metadata: { operationId: op.id, operationType: op.type },
           }
         }).pipe(Effect.orDie),
@@ -991,8 +1013,8 @@ export const DesignRelateConceptsTool = Tool.define<
 )
 
 const WithdrawRelationParameters = Schema.Struct({
-  from: Schema.String.annotate({ description: "Source concept name or ID" }),
-  to: Schema.String.annotate({ description: "Target concept name or ID" }),
+  left: Schema.String.annotate({ description: "Left concept name or ID (unordered endpoint)" }),
+  right: Schema.String.annotate({ description: "Right concept name or ID (unordered endpoint)" }),
 })
 
 export const DesignWithdrawRelationTool = Tool.define<
@@ -1009,26 +1031,26 @@ export const DesignWithdrawRelationTool = Tool.define<
       execute: (args, ctx) =>
         Effect.gen(function* () {
           const state = yield* design.getState()
-          const fromNode = state.nodes.find(
-            (n) => n.id === args.from || n.name === args.from || n.aliases.includes(args.from),
+          const leftNode = state.nodes.find(
+            (n) => n.id === args.left || n.name === args.left || n.aliases.includes(args.left),
           )
-          if (!fromNode) {
-            return { title: "Source concept not found", output: `No concept matching "${args.from}"`, metadata: {} }
+          if (!leftNode) {
+            return { title: "Left concept not found", output: `No concept matching "${args.left}"`, metadata: {} }
           }
-          const toNode = state.nodes.find(
-            (n) => n.id === args.to || n.name === args.to || n.aliases.includes(args.to),
+          const rightNode = state.nodes.find(
+            (n) => n.id === args.right || n.name === args.right || n.aliases.includes(args.right),
           )
-          if (!toNode) {
-            return { title: "Target concept not found", output: `No concept matching "${args.to}"`, metadata: {} }
+          if (!rightNode) {
+            return { title: "Right concept not found", output: `No concept matching "${args.right}"`, metadata: {} }
           }
           const op = yield* design.bufferAddOperation(ctx.sessionID, {
             type: "delete_edge",
-            description: `Delete relation ${fromNode.name} -- ${toNode.name}`,
-            payload: { leftNodeId: fromNode.id, rightNodeId: toNode.id },
+            description: `Delete relation ${leftNode.name} -- ${rightNode.name}`,
+            payload: { leftNodeId: leftNode.id, rightNodeId: rightNode.id },
           })
           return {
             title: "Withdrew relation",
-            output: `${fromNode.name} -- ${toNode.name} queued for removal`,
+            output: `${leftNode.name} -- ${rightNode.name} queued for removal`,
             metadata: { operationId: op.id, operationType: "delete_edge" },
           }
         }).pipe(Effect.orDie),
@@ -1228,7 +1250,7 @@ export const DesignFinalizeChangeTool = Tool.define<
           const operations = yield* design.bufferListOperations(ctx.sessionID)
           const pending = yield* design.bufferGetDelta(ctx.sessionID)
           const summary = yield* design.summarizeGraphState(state)
-          const details = yield* formatPendingDelta(state, pending)
+          const details = yield* formatPendingDelta(state, operations, pending)
           const errors = validatePendingOperations(state, operations)
           if (errors.length > 0) {
             return {
@@ -1605,13 +1627,115 @@ function validatePendingOperations(
   return errors
 }
 
-function formatPendingDelta(state: DesignTypes.GraphState, delta: GraphAgentTypes.GraphDelta): Effect.Effect<string> {
+function formatPendingDelta(
+  state: DesignTypes.GraphState,
+  operations: GraphAgentTypes.BufferOperation[],
+  delta: GraphAgentTypes.GraphDelta,
+): Effect.Effect<string> {
   return Effect.gen(function* () {
-    const nodeName = (id: string) => state.nodes.find((n) => n.id === id || n.name === id || n.aliases.includes(id))?.name ?? id
+    const pendingNodes = new Map<string, DesignTypes.Node>()
+    const pendingContexts = new Map<string, DesignTypes.BoundedContext>()
+    const pendingPrototypes = new Map<string, DesignTypes.RelationPrototype>()
 
-    const contextName = (id: string) => state.contexts.find((c) => c.id === id || c.name === id)?.name ?? id
+    for (const op of operations) {
+      switch (op.type) {
+        case "create_context": {
+          const payload = op.payload as { id: string; name: string; semantics?: string }
+          pendingContexts.set(payload.id, {
+            id: payload.id,
+            name: payload.name,
+            semantics: payload.semantics ?? "",
+            nodeIds: [],
+          })
+          break
+        }
+        case "update_context": {
+          const payload = op.payload as { id: string; patch: { name?: string; semantics?: string } }
+          const existing = state.contexts.find((c) => c.id === payload.id)
+          const pending = pendingContexts.get(payload.id)
+          const base = pending ?? existing
+          if (base) {
+            pendingContexts.set(payload.id, {
+              ...base,
+              name: payload.patch.name ?? base.name,
+              semantics: payload.patch.semantics ?? base.semantics,
+            })
+          }
+          break
+        }
+        case "create_node": {
+          const payload = op.payload as GraphAgentTypes.NodeInput & { id?: string }
+          const id = payload.id ?? ""
+          pendingNodes.set(id, {
+            id,
+            name: payload.name,
+            aliases: payload.aliases ?? [],
+            contextId: payload.contextId,
+            kind: payload.kind ?? "node",
+            defaultSemantics: payload.defaultSemantics ?? "",
+            connectedEdges: payload.connectedEdges ?? [],
+            createdAt: payload.createdAt ?? Date.now(),
+            updatedAt: payload.updatedAt ?? Date.now(),
+            retired: payload.retired ?? false,
+          } as DesignTypes.Node)
+          break
+        }
+        case "update_node": {
+          const payload = op.payload as { id: string; patch: Partial<GraphAgentTypes.NodeInput> }
+          const existing = state.nodes.find((n) => n.id === payload.id)
+          const pending = pendingNodes.get(payload.id)
+          const base = pending ?? existing
+          if (base) {
+            pendingNodes.set(payload.id, {
+              ...base,
+              name: payload.patch.name ?? base.name,
+              aliases: payload.patch.aliases ?? base.aliases,
+              contextId: payload.patch.contextId ?? base.contextId,
+              kind: payload.patch.kind ?? base.kind,
+              defaultSemantics: payload.patch.defaultSemantics ?? base.defaultSemantics,
+              retired: payload.patch.retired ?? base.retired,
+            })
+          }
+          break
+        }
+        case "create_prototype": {
+          const payload = op.payload as { id: string; name: string; defaultSemantics?: string; parameterSchema?: Record<string, unknown> }
+          pendingPrototypes.set(payload.id, {
+            id: payload.id,
+            name: payload.name,
+            defaultSemantics: payload.defaultSemantics ?? "",
+            parameterSchema: payload.parameterSchema ?? {},
+          })
+          break
+        }
+        case "update_prototype": {
+          const payload = op.payload as { id: string; patch: { name?: string; defaultSemantics?: string; parameterSchema?: Record<string, unknown> } }
+          const existing = state.prototypes.find((p) => p.id === payload.id)
+          const pending = pendingPrototypes.get(payload.id)
+          const base = pending ?? existing
+          if (base) {
+            pendingPrototypes.set(payload.id, {
+              ...base,
+              name: payload.patch.name ?? base.name,
+              defaultSemantics: payload.patch.defaultSemantics ?? base.defaultSemantics,
+              parameterSchema: payload.patch.parameterSchema ?? base.parameterSchema,
+            })
+          }
+          break
+        }
+      }
+    }
 
-    const prototypeName = (id: string) => state.prototypes.find((p) => p.id === id || p.name === id)?.name ?? id
+    const nodeName = (id: string) =>
+      pendingNodes.get(id)?.name ??
+      state.nodes.find((n) => n.id === id || n.name === id || n.aliases.includes(id))?.name ??
+      id
+
+    const contextName = (id: string) =>
+      pendingContexts.get(id)?.name ?? state.contexts.find((c) => c.id === id || c.name === id)?.name ?? id
+
+    const prototypeName = (id: string) =>
+      pendingPrototypes.get(id)?.name ?? state.prototypes.find((p) => p.id === id || p.name === id)?.name ?? id
 
     const lines: string[] = []
 

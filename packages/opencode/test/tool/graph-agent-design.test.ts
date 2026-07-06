@@ -129,13 +129,13 @@ describe("GraphAgent internal design tools", () => {
       yield* (yield* Tool.init(nodeTool)).execute({ name: "船", context: contextId }, ctx)
       yield* (yield* Tool.init(nodeTool)).execute({ name: "海", context: contextId }, ctx)
       yield* (yield* Tool.init(protoTool)).execute({ name: "关联" }, ctx)
-      yield* (yield* Tool.init(relateTool)).execute({ from: "船", to: "海", relation: "关联" }, ctx)
+
+      yield* (yield* Tool.init(relateTool)).execute({ left: "船", right: "海", relation: "关联" }, ctx)
 
       yield* design.bufferApply(ctx.sessionID)
 
       const expandResult = yield* (yield* Tool.init(expandTool)).execute({ name_or_id: "船" }, ctx)
       expect(expandResult.output).toContain("海")
-
       const tws = yield* (yield* Tool.init(twsTool)).execute({}, ctx)
       expect(tws.output).toContain("海")
     }).pipe(Effect.provide(provideDesign)),
@@ -225,21 +225,21 @@ describe("GraphAgent internal design tools", () => {
       yield* (yield* Tool.init(protoTool)).execute({ name: "aggregate" }, ctx)
 
       yield* (yield* Tool.init(relateTool)).execute(
-        { from: "船", to: "生命值", relation: "aggregate" },
+        { left: "船", right: "生命值", relation: "aggregate" },
         ctx,
       )
 
       yield* design.bufferApply(ctx.sessionID)
 
       const updateResult = yield* (yield* Tool.init(relateTool)).execute(
-        { from: "船", to: "生命值", relation: "aggregate", constraints: { max: 100 } },
+        { left: "船", right: "生命值", relation: "aggregate", constraints: { max: 100 } },
         ctx,
       )
       expect(updateResult.output).toContain("aggregate")
 
       yield* design.bufferApply(ctx.sessionID)
 
-      yield* (yield* Tool.init(deleteTool)).execute({ from: "船", to: "生命值" }, ctx)
+      yield* (yield* Tool.init(deleteTool)).execute({ left: "船", right: "生命值" }, ctx)
 
       yield* design.bufferApply(ctx.sessionID)
 
@@ -457,6 +457,71 @@ describe("GraphAgent internal design tools", () => {
 
       const afterClear = yield* (yield* Tool.init(searchTool)).execute({ query: "生命值" }, ctx)
       expect(afterClear.metadata.matchCount).toBe(0)
+    }).pipe(Effect.provide(provideDesign)),
+  )
+
+  it.instance("relate_concepts treats edge as undirected and updates pending edge", () =>
+    Effect.gen(function* () {
+      const design = yield* Design.Service
+      const ctxTool = yield* GraphAgentDesignTools.DesignDefineContextTool
+      const nodeTool = yield* GraphAgentDesignTools.DesignDefineConceptTool
+      const protoTool = yield* GraphAgentDesignTools.DesignDefineRelationPrototypeTool
+      const relateTool = yield* GraphAgentDesignTools.DesignRelateConceptsTool
+      const ctx = makeCtx()
+
+      const c = yield* (yield* Tool.init(ctxTool)).execute({ name: "系统" }, ctx)
+      const contextId = c.metadata.contextId as string
+      yield* (yield* Tool.init(nodeTool)).execute({ name: "船", context: contextId }, ctx)
+      yield* (yield* Tool.init(nodeTool)).execute({ name: "海", context: contextId }, ctx)
+      yield* (yield* Tool.init(protoTool)).execute({ name: "关联" }, ctx)
+
+      yield* (yield* Tool.init(relateTool)).execute({ left: "船", right: "海", relation: "关联" }, ctx)
+      yield* (yield* Tool.init(relateTool)).execute({ left: "海", right: "船", relation: "关联" }, ctx)
+
+      const operations = yield* design.bufferListOperations(ctx.sessionID)
+      const createEdgeOps = operations.filter((o) => o.type === "create_edge")
+      const updateEdgeOps = operations.filter((o) => o.type === "update_edge")
+      expect(createEdgeOps.length).toBe(1)
+      expect(updateEdgeOps.length).toBe(1)
+
+      yield* design.bufferApply(ctx.sessionID)
+      const state = yield* design.getState()
+      expect(state.edges.length).toBe(1)
+    }).pipe(Effect.provide(provideDesign)),
+  )
+
+  it.instance("finalize change resolves pending node names after partial edge undo", () =>
+    Effect.gen(function* () {
+      const design = yield* Design.Service
+      const ctxTool = yield* GraphAgentDesignTools.DesignDefineContextTool
+      const nodeTool = yield* GraphAgentDesignTools.DesignDefineConceptTool
+      const protoTool = yield* GraphAgentDesignTools.DesignDefineRelationPrototypeTool
+      const relateTool = yield* GraphAgentDesignTools.DesignRelateConceptsTool
+      const undoTool = yield* GraphAgentDesignTools.DesignUndoBufferOperationTool
+      const finalizeTool = yield* GraphAgentDesignTools.DesignFinalizeChangeTool
+      const question = yield* Question.Service
+      const ctx = makeCtx()
+
+      const c = yield* (yield* Tool.init(ctxTool)).execute({ name: "系统" }, ctx)
+      const contextId = c.metadata.contextId as string
+      yield* (yield* Tool.init(nodeTool)).execute({ name: "船", context: contextId }, ctx)
+      yield* (yield* Tool.init(nodeTool)).execute({ name: "海", context: contextId }, ctx)
+      yield* (yield* Tool.init(protoTool)).execute({ name: "关联" }, ctx)
+
+      yield* (yield* Tool.init(relateTool)).execute({ left: "船", right: "海", relation: "关联" }, ctx)
+      const second = yield* (yield* Tool.init(relateTool)).execute({ left: "海", right: "船", relation: "关联" }, ctx)
+
+      yield* (yield* Tool.init(undoTool)).execute({ operation_id: second.metadata.operationId as string }, ctx)
+
+      const fiber = yield* (yield* Tool.init(finalizeTool)).execute({}, ctx).pipe(Effect.forkScoped)
+      const item = yield* pendingQuestion(question)
+      const questionText = item.questions[0]?.question ?? ""
+      expect(questionText).toContain("船")
+      expect(questionText).toContain("海")
+      expect(questionText).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)
+
+      yield* question.reply({ requestID: item.id, answers: [["Abandon"]] })
+      yield* Fiber.join(fiber)
     }).pipe(Effect.provide(provideDesign)),
   )
 })

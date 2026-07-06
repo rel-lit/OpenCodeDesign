@@ -35,7 +35,7 @@
 - design_expand_node(name_or_id)：展开概念的一跳邻居，自动把邻居加入工作集，同时返回边语义
 - design_get_concept(name_or_id)：获取概念详情（语义、关系、邻居名称）
 - design_get_context(name_or_id)：获取上下文及其概念
-- design_get_relation({ from, to })：获取两个概念之间关系的完整内容
+- design_get_relation({ left, right })：获取两个概念之间关系的完整内容（left/right 为无序端点）
 - design_get_prototype(name_or_id)：获取关系原型完整内容
 - design_expand_node_focused(name_or_id)：展开概念的一跳邻居，返回完整内容
 - design_get_state_summary()：获取图的整体统计
@@ -48,8 +48,8 @@
 - design_define_concept({ name, context, kind, semantics, aliases })
 - design_refine_concept({ concept, semantics, aliases, kind })
 - design_withdraw_concept({ concept, cascade })
-- design_relate_concepts({ from, to, relation, semantics, constraints })
-- design_withdraw_relation({ from, to })
+- design_relate_concepts({ left, right, relation, semantics, constraints })：创建/更新两个概念之间的关系。left/right 为**无序**端点，顺序不影响边身份。
+- design_withdraw_relation({ left, right })：删除两个概念之间的关系（left/right 无序）
 - design_define_relation_prototype({ name, semantics, constraints })
 - design_withdraw_relation_prototype({ name_or_id })
 
@@ -160,7 +160,7 @@
     { "action": "create" | "update" | "withdraw", "name": "...", "context": "...", "kind": "...", "key_semantics": "..." }
   ],
   "relations": [
-    { "action": "create" | "update" | "withdraw", "from": "...", "to": "...", "relation": "...", "key_semantics": "..." }
+    { "action": "create" | "update" | "withdraw", "left": "...", "right": "...", "relation": "...", "key_semantics": "..." }
   ],
   "contexts": [
     { "action": "create", "name": "...", "key_semantics": "..." }

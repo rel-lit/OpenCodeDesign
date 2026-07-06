@@ -80,8 +80,8 @@ export interface ChangePlan {
   }>
   relations?: Array<{
     action: "create" | "update" | "withdraw"
-    from: string
-    to: string
+    left: string
+    right: string
     relation: string
     key_semantics?: string
   }>
