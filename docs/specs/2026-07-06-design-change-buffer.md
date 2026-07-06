@@ -38,6 +38,50 @@
 | 原子放弃 | 终稿 Abandon 时清空所有缓冲操作，数据库不受影响 |
 | 提交后不可单独回滚 | 已提交的修改进入设计图历史，只能通过新的变更反向操作 |
 
+## 两个层面的操作
+
+必须区分以下两个层面：
+
+### 层面 1：对设计图的内容操作（Content Operation）
+
+这些操作描述的是"用户希望设计图变成什么样"。它们进入 `Design Change Buffer`，终稿 Approve 后才会真正写入数据库。
+
+| 类型 | 对应工具 | 含义 |
+|---|---|---|
+| `create_context` | `design_define_context` | 设计图中新增一个限界上下文 |
+| `update_context` | （未来） | 设计图中更新一个限界上下文 |
+| `delete_context` | （未来） | 设计图中删除一个限界上下文 |
+| `create_node` | `design_define_concept` | 设计图中新增一个概念 |
+| `update_node` | `design_refine_concept` | 设计图中更新一个概念 |
+| `delete_node` | `design_withdraw_concept` | 设计图中删除一个概念 |
+| `create_edge` | `design_relate_concepts` | 设计图中新增一条关系 |
+| `update_edge` | `design_relate_concepts`（更新） | 设计图中更新一条关系 |
+| `delete_edge` | `design_withdraw_relation` | 设计图中删除一条关系 |
+| `create_prototype` | `design_define_relation_prototype` | 设计图中新增一个关系原型 |
+| `update_prototype` | `design_define_relation_prototype`（同名更新） | 设计图中更新一个关系原型 |
+| `delete_prototype` | （未来） | 设计图中删除一个关系原型 |
+
+**关键**：`delete_context`、`delete_node`、`delete_edge`、`delete_prototype` 等内容操作，表示的是**设计图层面的删除意图**。它们进入缓冲区，不会立即删除数据库中的任何内容。
+
+### 层面 2：对缓冲区的控制操作（Buffer Control Operation）
+
+这些操作不描述设计图变更，只管理缓冲区本身。它们**不会**进入缓冲区作为内容操作，而是直接作用于缓冲区的操作列表。
+
+| 工具 | 含义 |
+|---|---|
+| `design_list_buffer_operations` | 查看当前缓冲区中的内容操作列表 |
+| `design_undo_buffer_operation` | 从缓冲区中移除某条内容操作 |
+
+**关键**：`design_undo_buffer_operation` 不是设计图变更。它只是把缓冲区里的一条**待执行计划**移除。例如：
+- 缓冲区里有内容操作 `delete_context "战斗系统"`（表示用户希望删除这个 context）
+- GraphAgent 调用 `design_undo_buffer_operation({ operation_id: "op-1" })`
+- 结果是缓冲区里不再有 `delete_context "战斗系统"` 这条待执行计划
+- 数据库中的 "战斗系统" context 完全没有被触碰
+
+> **重要区分**：
+> - `delete_context` / `delete_node` / `delete_edge` / `delete_prototype` 等内容操作，表示**设计图层面的删除意图**，会进入缓冲区等待提交。
+> - `design_undo_buffer_operation` 是缓冲区控制工具，表示**撤回缓冲区里的一条待执行计划**，不进入缓冲区，也不会直接修改数据库。
+
 ## 命名调整
 
 | 旧命名 | 新命名 |
@@ -52,24 +96,35 @@
 
 ## 操作类型
 
-缓冲区支持的操作类型：
+### 内容操作（Content Operation）
+
+缓冲区支持的内容操作类型：
 
 | 类型 | 对应工具 | 说明 |
 |---|---|---|
-| `create_context` | `design_define_context` | 新增限界上下文 |
-| `create_node` | `design_define_concept` | 新增概念 |
-| `update_node` | `design_refine_concept` | 更新概念 |
-| `delete_node` | `design_withdraw_concept` | 删除概念 |
-| `create_edge` | `design_relate_concepts` | 新增关系 |
-| `update_edge` | `design_relate_concepts`（更新） | 更新关系 |
-| `delete_edge` | `design_withdraw_relation` | 删除关系 |
-| `create_prototype` | `design_define_relation_prototype` | 新增关系原型 |
-| `update_prototype` | `design_define_relation_prototype`（同名更新） | 更新关系原型 |
+| `create_context` | `design_define_context` | 设计图中新增限界上下文 |
+| `create_node` | `design_define_concept` | 设计图中新增概念 |
+| `update_node` | `design_refine_concept` | 设计图中更新概念 |
+| `delete_node` | `design_withdraw_concept` | 设计图中删除概念 |
+| `create_edge` | `design_relate_concepts` | 设计图中新增关系 |
+| `update_edge` | `design_relate_concepts`（更新） | 设计图中更新关系 |
+| `delete_edge` | `design_withdraw_relation` | 设计图中删除关系 |
+| `create_prototype` | `design_define_relation_prototype` | 设计图中新增关系原型 |
+| `update_prototype` | `design_define_relation_prototype`（同名更新） | 设计图中更新关系原型 |
 
 未来可扩展：
+- `update_context`
 - `delete_context`
 - `delete_prototype`
-- `update_context`
+
+### 缓冲区控制操作（Buffer Control Operation）
+
+这些操作不进入缓冲区，只用于管理缓冲区本身：
+
+| 工具 | 说明 |
+|---|---|
+| `design_list_buffer_operations` | 查看当前缓冲区中的内容操作列表 |
+| `design_undo_buffer_operation` | 从缓冲区中移除某条内容操作 |
 
 ## 后端设计
 
@@ -78,9 +133,12 @@
 ```ts
 export interface BufferOperation {
   id: string
-  type: "create_context" | "create_node" | "update_node" | "delete_node" |
-         "create_edge" | "update_edge" | "delete_edge" |
-         "create_prototype" | "update_prototype"
+  // 内容操作类型：描述设计图将如何变更
+  type:
+    | "create_context" | "update_context" | "delete_context"
+    | "create_node" | "update_node" | "delete_node"
+    | "create_edge" | "update_edge" | "delete_edge"
+    | "create_prototype" | "update_prototype" | "delete_prototype"
   description: string
   payload: unknown
 }
@@ -397,4 +455,3 @@ appliedChange: {
 - `docs/specs/2026-07-06-design-unified-change-mode.md`：统一 change mode 工作流，本规格是其细化。
 - `docs/specs/2026-07-06-design-change-forced-output.md`：change-forced 输出类型。
 - `docs/specs/2026-07-06-design-approval-timeline-rendering.md`：审批时间线渲染。
-- `docs/specs/2026-07-06-design-accumulator-atomic-operations.md`：第一版讨论稿（历史参考）。
