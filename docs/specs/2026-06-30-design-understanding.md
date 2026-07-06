@@ -99,7 +99,71 @@ const disabled = Permission.disabled(
 
 所有工具先注册进 `ToolRegistry`，然后按 Agent 的 permission ruleset 过滤。所以 Design Agent 的 permission 里 `design_*: allow`、文件工具 `deny` 是正确的。
 
-但 future 可能有场景：build agent 也需要读取 design 图（比如"按设计图实现代码"）。这时候不应该给 build agent 开 design 工具的创建权限，而是应该提供只读的 `design_query_*` 工具。权限系统可以精确到每个 tool name，所以这是自然扩展。
+### 权限设计原则：默认关闭，按需显式打开
+
+OpenCode 的权限机制采用"默认 allow，具体 deny/allow 覆盖"的模型：
+
+- `defaults` ruleset 中通常把 `*` 设为 `"allow"`，表示所有工具默认启用。
+- 但 Design 相关的工具（包括读工具、写工具、审批工具、子代理调用）在 `defaults` 中被统一设为 `"deny"`。
+- 只有真正需要操作设计图的 Agent（如 `design-graph` 子代理）才在其自己的 permission ruleset 中显式 `allow` 所需的工具。
+- 其他 Agent（如 `build`、`plan`）继承 `defaults`，自然无法调用任何 design 工具。
+
+例如：
+
+```typescript
+const defaults = Permission.fromConfig({
+  "*": "allow",
+  // ...
+  design_define_context: "deny",
+  design_define_concept: "deny",
+  design_relate_concepts: "deny",
+  design_get_context: "deny",
+  // ... 所有 design_* 工具默认 deny
+  task: {
+    "design-graph": "deny",
+    "design-search": "deny",
+  },
+})
+
+const designGraphPermissions = Permission.fromConfig({
+  // ...
+  design_get_context: "allow",
+  design_define_context: "allow",
+  design_relate_concepts: "allow",
+  // ... 仅 design-graph 子代理按需 allow
+})
+```
+
+`build` agent 的权限只需要合并 `defaults`，不需要额外 deny 任何 design 工具：
+
+```typescript
+build: {
+  permission: Permission.merge(
+    defaults,
+    Permission.fromConfig({
+      question: "allow",
+      plan_enter: "allow",
+      task: {
+        "design-graph": "deny",
+        "design-search": "deny",
+      },
+    }),
+    user,
+  ),
+}
+```
+
+这里 `build` 显式 deny 的仅是 `task` 调用 design 子代理；其他 design 工具已经被 `defaults` 关闭。
+
+### 未来扩展
+
+future 可能有场景：build agent 也需要读取 design 图（比如"按设计图实现代码"）。这时候只需要：
+
+1. 在 `defaults` 中保持 design 写工具 deny。
+2. 在 build agent 的 permission 中显式 allow 所需的只读 design 工具（如 `design_get_context`、`design_get_concept`、`design_search_graph` 等）。
+3. 绝不在 build agent 中 allow 写工具（`design_define_*`、`design_refine_*`、`design_withdraw_*`、`design_relate_concepts` 等）。
+
+权限系统可以精确到每个 tool name，所以这是自然扩展。
 
 ## 六、加载与恢复机制
 
