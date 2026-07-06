@@ -17,29 +17,16 @@ import { PlanHandoff } from "./plan-handoff"
 import { Provider } from "@/provider/provider"
 
 export interface Interface {
-  readonly createContext: GraphEngine.Interface["createContext"]
   readonly listContexts: GraphEngine.Interface["listContexts"]
   readonly getContext: GraphEngine.Interface["getContext"]
-  readonly updateContext: (id: string, input: Partial<Omit<DesignTypes.BoundedContext, "id">>) => Effect.Effect<DesignTypes.BoundedContext, GraphEngine.GraphEngineError>
-  readonly createNode: GraphEngine.Interface["createNode"]
   readonly getNode: GraphEngine.Interface["getNode"]
-  readonly updateNode: GraphEngine.Interface["updateNode"]
-  readonly retireNode: GraphEngine.Interface["retireNode"]
-  readonly deleteNode: GraphEngine.Interface["deleteNode"]
   readonly findNodesByName: GraphEngine.Interface["findNodesByName"]
-  readonly createEdge: GraphEngine.Interface["createEdge"]
-  readonly updateEdge: GraphEngine.Interface["updateEdge"]
-  readonly deleteEdge: GraphEngine.Interface["deleteEdge"]
-  readonly createPrototype: GraphEngine.Interface["createPrototype"]
-  readonly updatePrototype: GraphEngine.Interface["updatePrototype"]
-  readonly deletePrototype: GraphEngine.Interface["deletePrototype"]
-  readonly listPrototypes: GraphEngine.Interface["listPrototypes"]
-  readonly getPrototype: GraphEngine.Interface["getPrototype"]
-  readonly deleteContext: GraphEngine.Interface["deleteContext"]
-  readonly touchContext: WorkingSet.Interface["touchContext"]
-  readonly touchNode: WorkingSet.Interface["touchNode"]
   readonly listNodes: GraphEngine.Interface["listNodes"]
   readonly listEdges: GraphEngine.Interface["listEdges"]
+  readonly listPrototypes: GraphEngine.Interface["listPrototypes"]
+  readonly getPrototype: GraphEngine.Interface["getPrototype"]
+  readonly touchContext: WorkingSet.Interface["touchContext"]
+  readonly touchNode: WorkingSet.Interface["touchNode"]
   readonly listWorkingSet: WorkingSet.Interface["list"]
   readonly getState: () => Effect.Effect<DesignTypes.GraphState>
   readonly init: () => Effect.Effect<void>
@@ -212,62 +199,12 @@ export const layer = (options?: LayerOptions) =>
       ),
     )
 
-    const createContext = Effect.fn("Design.createContext")((input: Parameters<GraphEngine.Interface["createContext"]>[0]) =>
-      use((state) =>
-        Effect.gen(function* () {
-          const ctx = yield* state.graph.createContext(input)
-          const event = yield* state.eventLog.append({ eventType: "context_created", affectedNodeIds: [], affectedEdgeKeys: [] })
-          yield* state.workingSet.touchContext(ctx.id)
-          yield* persistMutation(event)
-          return ctx
-        }),
-      ),
-    )
-
-    const createNode = Effect.fn("Design.createNode")((input: Parameters<GraphEngine.Interface["createNode"]>[0]) =>
-      use((state) =>
-        Effect.gen(function* () {
-          const node = yield* state.graph.createNode(input)
-          const event = yield* state.eventLog.append({ eventType: "node_created", affectedNodeIds: [node.id] })
-          yield* state.workingSet.touchNode(node.id)
-          yield* persistMutation(event)
-          return node
-        }),
-      ),
-    )
-
-    const createEdge = Effect.fn("Design.createEdge")((input: Parameters<GraphEngine.Interface["createEdge"]>[0]) =>
-      use((state) =>
-        Effect.gen(function* () {
-          const edge = yield* state.graph.createEdge(input)
-          const event = yield* state.eventLog.append({
-            eventType: "edge_created",
-            affectedNodeIds: [edge.leftNodeId, edge.rightNodeId],
-            affectedEdgeKeys: [DesignTypes.edgeKey(edge.leftNodeId, edge.rightNodeId)],
-          })
-          yield* Effect.all([state.workingSet.touchNode(edge.leftNodeId), state.workingSet.touchNode(edge.rightNodeId)])
-          yield* persistMutation(event)
-          return edge
-        }),
-      ),
-    )
-
     const listContexts = Effect.fn("Design.listContexts")(() => use((state) => state.graph.listContexts()))
     const getContext = Effect.fn("Design.getContext")((id: string) =>
       use((state) =>
         Effect.gen(function* () {
           const ctx = yield* state.graph.getContext(id)
           if (ctx) yield* state.workingSet.touchContext(ctx.id)
-          return ctx
-        }),
-      ),
-    )
-    const updateContext = Effect.fn("Design.updateContext")((id: string, input: Partial<Omit<DesignTypes.BoundedContext, "id">>) =>
-      use((state) =>
-        Effect.gen(function* () {
-          const ctx = yield* state.graph.updateContext(id, input)
-          const event = yield* state.eventLog.append({ eventType: "context_updated", affectedNodeIds: [] })
-          yield* persistMutation(event)
           return ctx
         }),
       ),
@@ -279,40 +216,6 @@ export const layer = (options?: LayerOptions) =>
           const node = yield* state.graph.getNode(id)
           if (node) yield* state.workingSet.touchNode(node.id)
           return node
-        }),
-      ),
-    )
-    const updateNode = Effect.fn("Design.updateNode")((id: string, input: Parameters<GraphEngine.Interface["updateNode"]>[1]) =>
-      use((state) =>
-        Effect.gen(function* () {
-          const node = yield* state.graph.updateNode(id, input)
-          const event = yield* state.eventLog.append({ eventType: "node_updated", affectedNodeIds: [node.id] })
-          yield* state.workingSet.touchNode(node.id)
-          yield* persistMutation(event)
-          return node
-        }),
-      ),
-    )
-    const retireNode = Effect.fn("Design.retireNode")((id: string, retired: boolean) =>
-      use((state) =>
-        Effect.gen(function* () {
-          const node = yield* state.graph.retireNode(id, retired)
-          const event = yield* state.eventLog.append({
-            eventType: retired ? "node_retired" : "node_unretired",
-            affectedNodeIds: [node.id],
-          })
-          yield* persistMutation(event)
-          return node
-        }),
-      ),
-    )
-    const deleteNode = Effect.fn("Design.deleteNode")((id: string) =>
-      use((state) =>
-        Effect.gen(function* () {
-          yield* state.graph.deleteNode(id)
-          const event = yield* state.eventLog.append({ eventType: "node_deleted", affectedNodeIds: [id] })
-          yield* state.workingSet.forgetNode(id)
-          yield* persistMutation(event)
         }),
       ),
     )
@@ -328,76 +231,8 @@ export const layer = (options?: LayerOptions) =>
       ),
     )
 
-    const updateEdge = Effect.fn("Design.updateEdge")((leftNodeId: string, rightNodeId: string, input: Parameters<GraphEngine.Interface["updateEdge"]>[2]) =>
-      use((state) =>
-        Effect.gen(function* () {
-          const edge = yield* state.graph.updateEdge(leftNodeId, rightNodeId, input)
-          const event = yield* state.eventLog.append({
-            eventType: "edge_updated",
-            affectedNodeIds: [edge.leftNodeId, edge.rightNodeId],
-            affectedEdgeKeys: [DesignTypes.edgeKey(edge.leftNodeId, edge.rightNodeId)],
-          })
-          yield* Effect.all([state.workingSet.touchNode(edge.leftNodeId), state.workingSet.touchNode(edge.rightNodeId)])
-          yield* persistMutation(event)
-          return edge
-        }),
-      ),
-    )
-    const deleteEdge = Effect.fn("Design.deleteEdge")((leftNodeId: string, rightNodeId: string) =>
-      use((state) =>
-        Effect.gen(function* () {
-          yield* state.graph.deleteEdge(leftNodeId, rightNodeId)
-          const event = yield* state.eventLog.append({
-            eventType: "edge_deleted",
-            affectedNodeIds: [leftNodeId, rightNodeId],
-            affectedEdgeKeys: [DesignTypes.edgeKey(leftNodeId, rightNodeId)],
-          })
-          yield* Effect.all([state.workingSet.touchNode(leftNodeId), state.workingSet.touchNode(rightNodeId)])
-          yield* persistMutation(event)
-        }),
-      ),
-    )
-
-    const createPrototype = Effect.fn("Design.createPrototype")((input: Parameters<GraphEngine.Interface["createPrototype"]>[0]) =>
-      use((state) =>
-        Effect.gen(function* () {
-          const proto = yield* state.graph.createPrototype(input)
-          const event = yield* state.eventLog.append({ eventType: "prototype_created", affectedNodeIds: [] })
-          yield* persistMutation(event)
-          return proto
-        }),
-      ),
-    )
-    const updatePrototype = Effect.fn("Design.updatePrototype")((id: string, input: Parameters<GraphEngine.Interface["updatePrototype"]>[1]) =>
-      use((state) =>
-        Effect.gen(function* () {
-          const proto = yield* state.graph.updatePrototype(id, input)
-          const event = yield* state.eventLog.append({ eventType: "prototype_updated", affectedNodeIds: [] })
-          yield* persistMutation(event)
-          return proto
-        }),
-      ),
-    )
-    const deletePrototype = Effect.fn("Design.deletePrototype")((id: string) =>
-      use((state) =>
-        Effect.gen(function* () {
-          yield* state.graph.deletePrototype(id)
-          const event = yield* state.eventLog.append({ eventType: "prototype_deleted", affectedNodeIds: [] })
-          yield* persistMutation(event)
-        }),
-      ),
-    )
     const listPrototypes = Effect.fn("Design.listPrototypes")(() => use((state) => state.graph.listPrototypes()))
     const getPrototype = Effect.fn("Design.getPrototype")((id: string) => use((state) => state.graph.getPrototype(id)))
-    const deleteContext = Effect.fn("Design.deleteContext")((id: string) =>
-      use((state) =>
-        Effect.gen(function* () {
-          yield* state.graph.deleteContext(id)
-          const event = yield* state.eventLog.append({ eventType: "context_deleted", affectedNodeIds: [] })
-          yield* persistMutation(event)
-        }),
-      ),
-    )
 
     const touchContext = Effect.fn("Design.touchContext")((contextId: string) =>
       use((state) => state.workingSet.touchContext(contextId)),
@@ -636,25 +471,12 @@ export const layer = (options?: LayerOptions) =>
     )
 
     return Service.of({
-      createContext,
       listContexts,
       getContext,
-      updateContext,
-      createNode,
       getNode,
-      updateNode,
-      retireNode,
-      deleteNode,
       findNodesByName,
-      createEdge,
-      updateEdge,
-      deleteEdge,
-      createPrototype,
-      updatePrototype,
-      deletePrototype,
       listPrototypes,
       getPrototype,
-      deleteContext,
       touchContext,
       touchNode,
       listNodes: () => use((state) => state.graph.listNodes()),

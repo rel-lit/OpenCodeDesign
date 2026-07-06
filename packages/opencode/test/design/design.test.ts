@@ -5,10 +5,60 @@ import { Design } from "../../src/design/design"
 import { DesignStore } from "../../src/design/store/store"
 import { InstanceStore } from "../../src/project/instance-store"
 import { TestInstance } from "../fixture/fixture"
+import type { BufferOperation } from "../../src/design/agent/types"
 
 const testLayer = Design.layer().pipe(Layer.provide(DesignStore.defaultLayer))
 
 const it = testEffect(testLayer)
+
+const sessionID = "test-session"
+
+const addAndApply = (design: Design.Interface, operations: Array<Omit<BufferOperation, "id">>) =>
+  Effect.gen(function* () {
+    for (const op of operations) {
+      yield* design.bufferAddOperation(sessionID, op)
+    }
+    yield* design.bufferApply(sessionID)
+  })
+
+const createContext = (design: Design.Interface, name: string, id?: string) =>
+  Effect.gen(function* () {
+    const contextId = id ?? crypto.randomUUID()
+    yield* addAndApply(design, [
+      {
+        type: "create_context",
+        description: `Create context ${name}`,
+        payload: { id: contextId, name },
+      },
+    ])
+    const ctx = yield* design.getContext(contextId)
+    if (!ctx) throw new Error(`Context ${name} not found after apply`)
+    return ctx
+  })
+
+const createNode = (design: Design.Interface, name: string, contextId: string, id?: string) =>
+  Effect.gen(function* () {
+    const nodeId = id ?? crypto.randomUUID()
+    yield* addAndApply(design, [
+      {
+        type: "create_node",
+        description: `Create concept ${name}`,
+        payload: { id: nodeId, name, contextId },
+      },
+    ])
+    const node = yield* design.getNode(nodeId)
+    if (!node) throw new Error(`Node ${name} not found after apply`)
+    return node
+  })
+
+const createEdge = (design: Design.Interface, leftNodeId: string, rightNodeId: string, prototypeId: string) =>
+  addAndApply(design, [
+    {
+      type: "create_edge",
+      description: `Create relation`,
+      payload: { leftNodeId, rightNodeId, prototypeId, parameters: {} },
+    },
+  ])
 
 describe("Design.Service", () => {
   it.instance("persists nodes and edges across reload", () =>
@@ -17,10 +67,10 @@ describe("Design.Service", () => {
       const design = yield* Design.Service
       yield* design.init()
 
-      const ctx = yield* design.createContext({ name: "战斗系统" })
-      const ship = yield* design.createNode({ name: "船", contextId: ctx.id })
-      const hp = yield* design.createNode({ name: "生命值", contextId: ctx.id })
-      yield* design.createEdge({ leftNodeId: ship.id, rightNodeId: hp.id, prototypeId: "aggregate", parameters: {} })
+      const ctx = yield* createContext(design, "战斗系统")
+      const ship = yield* createNode(design, "船", ctx.id)
+      const hp = yield* createNode(design, "生命值", ctx.id)
+      yield* createEdge(design, ship.id, hp.id, "aggregate")
 
       const before = yield* design.listNodes()
       expect(before.length).toBe(2)
@@ -43,8 +93,8 @@ describe("Design.Service", () => {
       const design = yield* Design.Service
       yield* design.init()
 
-      const ctx = yield* design.createContext({ name: "DirA" })
-      yield* design.createNode({ name: "NodeA", contextId: ctx.id })
+      const ctx = yield* createContext(design, "DirA")
+      yield* createNode(design, "NodeA", ctx.id)
 
       const nodes = yield* design.listNodes()
       expect(nodes.length).toBe(1)
@@ -55,7 +105,7 @@ describe("Design.Service", () => {
     Effect.gen(function* () {
       const design = yield* Design.Service
       yield* design.init()
-      const ctx = yield* design.createContext({ id: "ctx-fill", name: "Fill" })
+      const ctx = yield* createContext(design, "Fill", "ctx-fill")
 
       yield* design.applyRawDelta({
         addNodes: [
@@ -98,7 +148,7 @@ describe("Design.Service", () => {
     Effect.gen(function* () {
       const design = yield* Design.Service
       yield* design.init()
-      yield* design.createContext({ id: "ctx-core", name: "Core" })
+      yield* createContext(design, "Core", "ctx-core")
       yield* design.bumpVersion("visual-editor")
 
       const exit = yield* Effect.exit(design.checkChatAgentSync())
