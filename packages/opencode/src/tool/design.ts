@@ -2,6 +2,7 @@ import { Effect, Schema } from "effect"
 import * as Tool from "./tool"
 import { Design } from "@/design/design"
 import { VersionSync } from "@/design/system/version-sync"
+import { DesignChangeBuffer } from "@/design/system/design-change-buffer"
 import { TaskTool } from "./task"
 import { DesignTypes } from "@/design/core/types"
 import * as GraphAgentTypes from "@/design/agent/types"
@@ -251,6 +252,84 @@ function buildGraphAgentPrompt(input: {
   })
 }
 
+function findContextByNameOrIdWithBuffer(
+  design: Design.Interface,
+  sessionID: string,
+  nameOrId: string,
+): Effect.Effect<DesignTypes.BoundedContext | undefined> {
+  return Effect.gen(function* () {
+    const fromState = yield* design.findContextByNameOrId(nameOrId)
+    if (fromState) return fromState
+    const operations = yield* design.bufferListOperations(sessionID)
+    const op = operations.find(
+      (o) =>
+        o.type === "create_context" &&
+        ((o.payload as { id?: string }).id === nameOrId || (o.payload as { name: string }).name === nameOrId),
+    )
+    if (!op) return undefined
+    const payload = op.payload as { id: string; name: string; semantics?: string }
+    return { id: payload.id, name: payload.name, semantics: payload.semantics ?? "", nodeIds: [] }
+  })
+}
+
+function findNodeByNameOrIdWithBuffer(
+  design: Design.Interface,
+  sessionID: string,
+  nameOrId: string,
+): Effect.Effect<DesignTypes.Node | undefined> {
+  return Effect.gen(function* () {
+    const fromState = yield* design.findNodeByNameOrId(nameOrId)
+    if (fromState) return fromState
+    const operations = yield* design.bufferListOperations(sessionID)
+    const createOp = operations.find(
+      (o) =>
+        o.type === "create_node" &&
+        ((o.payload as { id?: string }).id === nameOrId || (o.payload as { name: string }).name === nameOrId),
+    )
+    if (!createOp) return undefined
+    const payload = createOp.payload as GraphAgentTypes.NodeInput & { id?: string }
+    const context = yield* findContextByNameOrIdWithBuffer(design, sessionID, payload.contextId)
+    return {
+      id: payload.id ?? "",
+      name: payload.name,
+      aliases: payload.aliases ?? [],
+      contextId: payload.contextId,
+      kind: payload.kind ?? "node",
+      defaultSemantics: payload.defaultSemantics ?? "",
+      connectedEdges: payload.connectedEdges ?? [],
+      createdAt: payload.createdAt ?? Date.now(),
+      updatedAt: payload.updatedAt ?? Date.now(),
+      retired: payload.retired ?? false,
+    } as DesignTypes.Node
+  })
+}
+
+function findPrototypeByNameOrIdWithBuffer(
+  design: Design.Interface,
+  sessionID: string,
+  nameOrId: string,
+): Effect.Effect<DesignTypes.RelationPrototype | undefined> {
+  return Effect.gen(function* () {
+    const prototypes = yield* design.listPrototypes()
+    const fromState = prototypes.find((p) => p.id === nameOrId || p.name === nameOrId)
+    if (fromState) return fromState
+    const operations = yield* design.bufferListOperations(sessionID)
+    const createOp = operations.find(
+      (o) =>
+        o.type === "create_prototype" &&
+        ((o.payload as { id?: string }).id === nameOrId || (o.payload as { name: string }).name === nameOrId),
+    )
+    if (!createOp) return undefined
+    const payload = createOp.payload as { id?: string; name: string; defaultSemantics?: string; parameterSchema?: Record<string, unknown> }
+    return {
+      id: payload.id ?? "",
+      name: payload.name,
+      defaultSemantics: payload.defaultSemantics ?? "",
+      parameterSchema: payload.parameterSchema ?? {},
+    }
+  })
+}
+
 const GetTemporaryWorkingSetParameters = Schema.Struct({})
 
 export const DesignGetTemporaryWorkingSetTool = Tool.define(
@@ -300,7 +379,7 @@ export const DesignExpandNodeTool = Tool.define<
       parameters: ExpandNodeParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const state = yield* design.getAccumulatedGraphState(ctx.sessionID)
+          const state = yield* design.getState()
           const node = state.nodes.find(
             (n) => n.id === args.name_or_id || n.name === args.name_or_id || n.aliases.includes(args.name_or_id),
           )
@@ -329,7 +408,7 @@ export const DesignExpandNodeTool = Tool.define<
               ? ` (${edge.parameters.semantics as string})`
               : ""
             lines.push(
-              `- ${node.name} --[${prototype.name}]${relationSemantics}--> ${other.name}`,
+              `- ${node.name} --[${prototype.name}]${relationSemantics}-- ${other.name}`,
             )
             if (prototype.defaultSemantics) {
               lines.push(`  prototype semantics: ${prototype.defaultSemantics}`)
@@ -367,7 +446,7 @@ export const DesignSearchGraphTool = Tool.define<
       parameters: SearchGraphParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const state = yield* design.getAccumulatedGraphState(ctx.sessionID)
+          const state = yield* design.getState()
           const matchedNodes = state.nodes.filter(
             (n) => n.name === args.query || n.aliases.includes(args.query),
           )
@@ -427,7 +506,7 @@ export const DesignGetStateSummaryTool = Tool.define<
       parameters: GetStateSummaryParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const state = yield* design.getAccumulatedGraphState(ctx.sessionID)
+          const state = yield* design.getState()
           return {
             title: "Design graph summary",
             output: yield* design.summarizeGraphState(state),
@@ -455,7 +534,7 @@ export const DesignGetContextTool = Tool.define<
       parameters: GetContextParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const state = yield* design.getAccumulatedGraphState(ctx.sessionID)
+          const state = yield* design.getState()
           const context = state.contexts.find((c) => c.id === args.name_or_id || c.name === args.name_or_id)
           if (!context) {
             return { title: "Context not found", output: `No context matching "${args.name_or_id}"`, metadata: {} }
@@ -494,7 +573,7 @@ export const DesignGetConceptTool = Tool.define<
       parameters: GetConceptParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const state = yield* design.getAccumulatedGraphState(ctx.sessionID)
+          const state = yield* design.getState()
           const node = state.nodes.find(
             (n) => n.id === args.name_or_id || n.name === args.name_or_id || n.aliases.includes(args.name_or_id),
           )
@@ -510,7 +589,7 @@ export const DesignGetConceptTool = Tool.define<
             const relationSemantics = e.parameters?.semantics
               ? ` (${e.parameters.semantics as string})`
               : ""
-            return `${other?.name ?? otherId} --[${prototype?.name ?? e.prototypeId}]${relationSemantics}-->`
+            return `${other?.name ?? otherId} --[${prototype?.name ?? e.prototypeId}]${relationSemantics}--`
           })
           const lines = [
             `Concept: ${node.name} (${node.id})`,
@@ -576,17 +655,101 @@ export const DesignDefineContextTool = Tool.define<
       parameters: DefineContextParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const context = yield* design.createContext({ name: args.name, semantics: args.semantics })
+          const id = crypto.randomUUID()
+          const op = yield* design.bufferAddOperation(ctx.sessionID, {
+            type: "create_context",
+            description: `Create context ${args.name}`,
+            payload: { id, name: args.name, semantics: args.semantics },
+          })
           yield* design.addTemporaryWorkingSetEntry(ctx.sessionID, {
-            id: context.id,
-            name: context.name,
+            id,
+            name: args.name,
             type: "context",
-            briefSemantics: context.semantics || "",
+            briefSemantics: args.semantics || "",
           })
           return {
-            title: `Defined context ${context.name}`,
-            output: `Context ${context.name} (${context.id})`,
-            metadata: { contextId: context.id },
+            title: `Defined context ${args.name}`,
+            output: `Context ${args.name} queued`,
+            metadata: { operationId: op.id, operationType: "create_context", contextId: id },
+          }
+        }).pipe(Effect.orDie),
+    }
+  }),
+)
+
+const UpdateContextParameters = Schema.Struct({
+  name_or_id: Schema.String.annotate({ description: "Context name or ID" }),
+  name: Schema.optional(Schema.String).annotate({ description: "Updated context name" }),
+  semantics: Schema.optional(Schema.String).annotate({ description: "Updated context semantics" }),
+})
+
+export const DesignUpdateContextTool = Tool.define<
+  typeof UpdateContextParameters,
+  Record<string, unknown>,
+  Design.Service
+>(
+  "design_update_context",
+  Effect.gen(function* () {
+    const design = yield* Design.Service
+    return {
+      description: designToolDescription("Update an existing bounded context."),
+      parameters: UpdateContextParameters,
+      execute: (args, ctx) =>
+        Effect.gen(function* () {
+          const state = yield* design.getState()
+          const context = state.contexts.find((c) => c.id === args.name_or_id || c.name === args.name_or_id)
+          if (!context) {
+            return { title: "Context not found", output: `No context matching "${args.name_or_id}"`, metadata: {} }
+          }
+          const patch: Record<string, unknown> = {}
+          if (args.name !== undefined) patch.name = args.name
+          if (args.semantics !== undefined) patch.semantics = args.semantics
+          const op = yield* design.bufferAddOperation(ctx.sessionID, {
+            type: "update_context",
+            description: `Update context ${context.name}`,
+            payload: { id: context.id, patch },
+          })
+          return {
+            title: `Updated context ${context.name}`,
+            output: `Context ${context.name} (${context.id}) queued for update`,
+            metadata: { operationId: op.id, operationType: "update_context" },
+          }
+        }).pipe(Effect.orDie),
+    }
+  }),
+)
+
+const WithdrawContextParameters = Schema.Struct({
+  name_or_id: Schema.String.annotate({ description: "Context name or ID" }),
+})
+
+export const DesignWithdrawContextTool = Tool.define<
+  typeof WithdrawContextParameters,
+  Record<string, unknown>,
+  Design.Service
+>(
+  "design_withdraw_context",
+  Effect.gen(function* () {
+    const design = yield* Design.Service
+    return {
+      description: designToolDescription("Withdraw (delete) a bounded context."),
+      parameters: WithdrawContextParameters,
+      execute: (args, ctx) =>
+        Effect.gen(function* () {
+          const state = yield* design.getState()
+          const context = state.contexts.find((c) => c.id === args.name_or_id || c.name === args.name_or_id)
+          if (!context) {
+            return { title: "Context not found", output: `No context matching "${args.name_or_id}"`, metadata: {} }
+          }
+          const op = yield* design.bufferAddOperation(ctx.sessionID, {
+            type: "delete_context",
+            description: `Delete context ${context.name}`,
+            payload: { id: context.id },
+          })
+          return {
+            title: `Withdrew context ${context.name}`,
+            output: `Context ${context.name} (${context.id}) queued for removal`,
+            metadata: { operationId: op.id, operationType: "delete_context" },
           }
         }).pipe(Effect.orDie),
     }
@@ -614,19 +777,25 @@ export const DesignDefineConceptTool = Tool.define<
       parameters: DefineConceptParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const context = yield* design.findContextByNameOrId(args.context)
+          const context = yield* findContextByNameOrIdWithBuffer(design, ctx.sessionID, args.context)
           if (!context) {
             return { title: "Context not found", output: `No context matching "${args.context}"`, metadata: {} }
           }
-          yield* design.addAccumulatedNode(ctx.sessionID, {
-            name: args.name,
-            contextId: context.id,
-            kind: args.kind,
-            defaultSemantics: args.semantics,
-            aliases: args.aliases,
+          const id = crypto.randomUUID()
+          const op = yield* design.bufferAddOperation(ctx.sessionID, {
+            type: "create_node",
+            description: `Create concept ${args.name} in context ${context.name}`,
+            payload: {
+              id,
+              name: args.name,
+              contextId: context.id,
+              kind: args.kind,
+              defaultSemantics: args.semantics,
+              aliases: args.aliases,
+            },
           })
           yield* design.addTemporaryWorkingSetEntry(ctx.sessionID, {
-            id: `tmp-${args.name}`,
+            id,
             name: args.name,
             type: "node",
             briefSemantics: args.semantics || "",
@@ -634,7 +803,7 @@ export const DesignDefineConceptTool = Tool.define<
           return {
             title: `Defined concept ${args.name}`,
             output: `Concept ${args.name} queued in context ${context.name}`,
-            metadata: {},
+            metadata: { operationId: op.id, operationType: "create_node", nodeId: id },
           }
         }).pipe(Effect.orDie),
     }
@@ -661,7 +830,7 @@ export const DesignRefineConceptTool = Tool.define<
       parameters: RefineConceptParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const state = yield* design.getAccumulatedGraphState(ctx.sessionID)
+          const state = yield* design.getState()
           const node = state.nodes.find(
             (n) => n.id === args.concept || n.name === args.concept || n.aliases.includes(args.concept),
           )
@@ -672,11 +841,15 @@ export const DesignRefineConceptTool = Tool.define<
           if (args.semantics !== undefined) patch.defaultSemantics = args.semantics
           if (args.aliases !== undefined) patch.aliases = [...args.aliases]
           if (args.kind !== undefined) patch.kind = args.kind
-          yield* design.updateAccumulatedNode(ctx.sessionID, node.id, patch as Partial<GraphAgentTypes.NodeInput>)
+          const op = yield* design.bufferAddOperation(ctx.sessionID, {
+            type: "update_node",
+            description: `Update concept ${node.name}`,
+            payload: { id: node.id, patch },
+          })
           return {
             title: `Refined concept ${node.name}`,
             output: `Concept ${node.name} (${node.id}) queued for update`,
-            metadata: {},
+            metadata: { operationId: op.id, operationType: "update_node" },
           }
         }).pipe(Effect.orDie),
     }
@@ -701,24 +874,32 @@ export const DesignWithdrawConceptTool = Tool.define<
       parameters: WithdrawConceptParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const state = yield* design.getAccumulatedGraphState(ctx.sessionID)
+          const state = yield* design.getState()
           const node = state.nodes.find(
             (n) => n.id === args.concept || n.name === args.concept || n.aliases.includes(args.concept),
           )
           if (!node) {
             return { title: "Concept not found", output: `No concept matching "${args.concept}"`, metadata: {} }
           }
+          const edges = state.edges.filter((e) => e.leftNodeId === node.id || e.rightNodeId === node.id)
           if (args.cascade) {
-            const edges = state.edges.filter((e) => e.leftNodeId === node.id || e.rightNodeId === node.id)
             for (const edge of edges) {
-              yield* design.deleteAccumulatedEdge(ctx.sessionID, edge.leftNodeId, edge.rightNodeId)
+              yield* design.bufferAddOperation(ctx.sessionID, {
+                type: "delete_edge",
+                description: `Delete edge ${edge.leftNodeId} -- ${edge.rightNodeId}`,
+                payload: { leftNodeId: edge.leftNodeId, rightNodeId: edge.rightNodeId },
+              })
             }
           }
-          yield* design.deleteAccumulatedNode(ctx.sessionID, node.id)
+          const op = yield* design.bufferAddOperation(ctx.sessionID, {
+            type: "delete_node",
+            description: `Delete concept ${node.name}`,
+            payload: { id: node.id },
+          })
           return {
             title: `Withdrew concept ${node.name}`,
-            output: `Concept ${node.name} (${node.id}) queued for removal.`,
-            metadata: {},
+            output: `Concept ${node.name} (${node.id}) queued for removal.${args.cascade ? ` ${edges.length} connected edge(s) queued for removal.` : ""}`,
+            metadata: { operationId: op.id, operationType: "delete_node" },
           }
         }).pipe(Effect.orDie),
     }
@@ -746,32 +927,45 @@ export const DesignRelateConceptsTool = Tool.define<
       parameters: RelateConceptsParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const state = yield* design.getAccumulatedGraphState(ctx.sessionID)
-          const fromNode = state.nodes.find(
-            (n) => n.id === args.from || n.name === args.from || n.aliases.includes(args.from),
-          )
+          const state = yield* design.getState()
+          const fromNode = yield* findNodeByNameOrIdWithBuffer(design, ctx.sessionID, args.from)
           if (!fromNode) {
             return { title: "Source concept not found", output: `No concept matching "${args.from}"`, metadata: {} }
           }
-          const toNode = state.nodes.find(
-            (n) => n.id === args.to || n.name === args.to || n.aliases.includes(args.to),
-          )
+          const toNode = yield* findNodeByNameOrIdWithBuffer(design, ctx.sessionID, args.to)
           if (!toNode) {
             return { title: "Target concept not found", output: `No concept matching "${args.to}"`, metadata: {} }
           }
-          const prototypes = yield* design.listPrototypes()
-          const prototype = prototypes.find((p) => p.id === args.relation || p.name === args.relation)
+          const prototype = yield* findPrototypeByNameOrIdWithBuffer(design, ctx.sessionID, args.relation)
           if (!prototype) {
             return { title: "Prototype not found", output: `No prototype matching "${args.relation}"`, metadata: {} }
           }
           const parameters: Record<string, unknown> = { ...(args.constraints ?? {}) }
           if (args.semantics !== undefined) parameters.semantics = args.semantics
-          yield* design.addAccumulatedEdge(ctx.sessionID, {
-            leftNodeId: fromNode.id,
-            rightNodeId: toNode.id,
-            prototypeId: prototype.id,
-            parameters,
-          })
+          const edgeKey = DesignTypes.edgeKey(fromNode.id, toNode.id)
+          const existingEdge = state.edges.find(
+            (e) => DesignTypes.edgeKey(e.leftNodeId, e.rightNodeId) === edgeKey,
+          )
+          const op = existingEdge
+            ? yield* design.bufferAddOperation(ctx.sessionID, {
+                type: "update_edge",
+                description: `Update relation ${fromNode.name} --[${prototype.name}]-- ${toNode.name}`,
+                payload: {
+                  leftNodeId: existingEdge.leftNodeId,
+                  rightNodeId: existingEdge.rightNodeId,
+                  patch: { prototypeId: prototype.id, parameters },
+                },
+              })
+            : yield* design.bufferAddOperation(ctx.sessionID, {
+                type: "create_edge",
+                description: `Create relation ${fromNode.name} --[${prototype.name}]-- ${toNode.name}`,
+                payload: {
+                  leftNodeId: fromNode.id,
+                  rightNodeId: toNode.id,
+                  prototypeId: prototype.id,
+                  parameters,
+                },
+              })
           yield* design.addTemporaryWorkingSetEntries(ctx.sessionID, [
             {
               id: fromNode.id,
@@ -788,8 +982,8 @@ export const DesignRelateConceptsTool = Tool.define<
           ])
           return {
             title: "Related concepts",
-            output: `${fromNode.name} --[${prototype.name}]--> ${toNode.name} queued`,
-            metadata: {},
+            output: `${fromNode.name} --[${prototype.name}]-- ${toNode.name} queued`,
+            metadata: { operationId: op.id, operationType: op.type },
           }
         }).pipe(Effect.orDie),
     }
@@ -814,7 +1008,7 @@ export const DesignWithdrawRelationTool = Tool.define<
       parameters: WithdrawRelationParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const state = yield* design.getAccumulatedGraphState(ctx.sessionID)
+          const state = yield* design.getState()
           const fromNode = state.nodes.find(
             (n) => n.id === args.from || n.name === args.from || n.aliases.includes(args.from),
           )
@@ -827,11 +1021,15 @@ export const DesignWithdrawRelationTool = Tool.define<
           if (!toNode) {
             return { title: "Target concept not found", output: `No concept matching "${args.to}"`, metadata: {} }
           }
-          yield* design.deleteAccumulatedEdge(ctx.sessionID, fromNode.id, toNode.id)
+          const op = yield* design.bufferAddOperation(ctx.sessionID, {
+            type: "delete_edge",
+            description: `Delete relation ${fromNode.name} -- ${toNode.name}`,
+            payload: { leftNodeId: fromNode.id, rightNodeId: toNode.id },
+          })
           return {
             title: "Withdrew relation",
-            output: `${fromNode.name} <-> ${toNode.name} queued for removal`,
-            metadata: {},
+            output: `${fromNode.name} -- ${toNode.name} queued for removal`,
+            metadata: { operationId: op.id, operationType: "delete_edge" },
           }
         }).pipe(Effect.orDie),
     }
@@ -857,16 +1055,152 @@ export const DesignDefineRelationPrototypeTool = Tool.define<
       parameters: DefineRelationPrototypeParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const proto = yield* design.createPrototype({
-            name: args.name,
-            defaultSemantics: args.semantics,
-            parameterSchema: args.constraints,
+          const prototypes = yield* design.listPrototypes()
+          const existing = prototypes.find((p) => p.id === args.name || p.name === args.name)
+          const id = existing ? existing.id : crypto.randomUUID()
+          const op = existing
+            ? yield* design.bufferAddOperation(ctx.sessionID, {
+                type: "update_prototype",
+                description: `Update prototype ${existing.name}`,
+                payload: {
+                  id: existing.id,
+                  patch: {
+                    name: args.name,
+                    defaultSemantics: args.semantics,
+                    parameterSchema: args.constraints,
+                  },
+                },
+              })
+            : yield* design.bufferAddOperation(ctx.sessionID, {
+                type: "create_prototype",
+                description: `Create prototype ${args.name}`,
+                payload: {
+                  id,
+                  name: args.name,
+                  defaultSemantics: args.semantics,
+                  parameterSchema: args.constraints,
+                },
+              })
+          return {
+            title: `${existing ? "Updated" : "Defined"} prototype ${args.name}`,
+            output: `Prototype ${args.name} queued`,
+            metadata: { operationId: op.id, operationType: op.type, prototypeId: id },
+          }
+        }).pipe(Effect.orDie),
+    }
+  }),
+)
+
+const WithdrawRelationPrototypeParameters = Schema.Struct({
+  name_or_id: Schema.String.annotate({ description: "Relation prototype name or ID" }),
+})
+
+export const DesignWithdrawRelationPrototypeTool = Tool.define<
+  typeof WithdrawRelationPrototypeParameters,
+  Record<string, unknown>,
+  Design.Service
+>(
+  "design_withdraw_relation_prototype",
+  Effect.gen(function* () {
+    const design = yield* Design.Service
+    return {
+      description: designToolDescription("Withdraw (delete) a relation prototype."),
+      parameters: WithdrawRelationPrototypeParameters,
+      execute: (args, ctx) =>
+        Effect.gen(function* () {
+          const state = yield* design.getState()
+          const prototype = state.prototypes.find((p) => p.id === args.name_or_id || p.name === args.name_or_id)
+          if (!prototype) {
+            return { title: "Prototype not found", output: `No prototype matching "${args.name_or_id}"`, metadata: {} }
+          }
+          const usingEdges = state.edges.filter((e) => e.prototypeId === prototype.id)
+          if (usingEdges.length > 0) {
+            const edgeLines = usingEdges.map(
+              (e) => `  ${e.leftNodeId} -- ${e.rightNodeId}`,
+            )
+            return {
+              title: "Prototype in use",
+              output: `Prototype "${prototype.name}" is used by ${usingEdges.length} edge(s) and cannot be withdrawn.\n${edgeLines.join("\n")}`,
+              metadata: { edges: usingEdges },
+            }
+          }
+          const op = yield* design.bufferAddOperation(ctx.sessionID, {
+            type: "delete_prototype",
+            description: `Delete prototype ${prototype.name}`,
+            payload: { id: prototype.id },
           })
           return {
-            title: `Defined prototype ${proto.name}`,
-            output: `Prototype ${proto.name} (${proto.id})`,
-            metadata: { prototypeId: proto.id },
+            title: `Withdrew prototype ${prototype.name}`,
+            output: `Prototype ${prototype.name} (${prototype.id}) queued for removal`,
+            metadata: { operationId: op.id, operationType: "delete_prototype" },
           }
+        }).pipe(Effect.orDie),
+    }
+  }),
+)
+
+const ListBufferOperationsParameters = Schema.Struct({})
+
+export const DesignListBufferOperationsTool = Tool.define<
+  typeof ListBufferOperationsParameters,
+  Record<string, unknown>,
+  Design.Service
+>(
+  "design_list_buffer_operations",
+  Effect.gen(function* () {
+    const design = yield* Design.Service
+    return {
+      description: designToolDescription("List all buffered design operations for this session."),
+      parameters: ListBufferOperationsParameters,
+      execute: (args, ctx) =>
+        Effect.gen(function* () {
+          const operations = yield* design.bufferListOperations(ctx.sessionID)
+          const lines = operations.map((op) => `- ${op.id}: ${op.type} - ${op.description}`)
+          return {
+            title: "Buffered operations",
+            output: lines.join("\n") || "No buffered operations.",
+            metadata: { operations },
+          }
+        }).pipe(Effect.orDie),
+    }
+  }),
+)
+
+const UndoBufferOperationParameters = Schema.Struct({
+  operation_id: Schema.String.annotate({ description: "Operation ID to undo" }),
+  cascade: Schema.optional(Schema.Boolean).annotate({ description: "Whether to also undo dependent operations" }),
+})
+
+export const DesignUndoBufferOperationTool = Tool.define<
+  typeof UndoBufferOperationParameters,
+  Record<string, unknown>,
+  Design.Service
+>(
+  "design_undo_buffer_operation",
+  Effect.gen(function* () {
+    const design = yield* Design.Service
+    return {
+      description: designToolDescription("Undo a buffered design operation."),
+      parameters: UndoBufferOperationParameters,
+      execute: (args, ctx) =>
+        Effect.gen(function* () {
+          const result = yield* design.bufferUndoOperation(ctx.sessionID, args.operation_id, args.cascade).pipe(
+            Effect.matchEffect({
+              onFailure: (error: DesignChangeBuffer.BufferError) =>
+                Effect.succeed({
+                  title: "Cannot undo operation",
+                  output: error.message,
+                  metadata: { blockedBy: error.blockedBy ?? [] },
+                }),
+              onSuccess: () =>
+                Effect.succeed({
+                  title: "Operation undone",
+                  output: `Operation ${args.operation_id} has been removed from the buffer.`,
+                  metadata: { operationId: args.operation_id, cascade: args.cascade ?? false },
+                }),
+            }),
+          )
+          return result
         }).pipe(Effect.orDie),
     }
   }),
@@ -890,10 +1224,19 @@ export const DesignFinalizeChangeTool = Tool.define<
       parameters: FinalizeChangeParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
-          const state = yield* design.getAccumulatedGraphState(ctx.sessionID)
-          const pending = yield* design.getChangeAccumulator(ctx.sessionID)
+          const state = yield* design.getState()
+          const operations = yield* design.bufferListOperations(ctx.sessionID)
+          const pending = yield* design.bufferGetDelta(ctx.sessionID)
           const summary = yield* design.summarizeGraphState(state)
           const details = yield* formatPendingDelta(state, pending)
+          const errors = validatePendingOperations(state, operations)
+          if (errors.length > 0) {
+            return {
+              title: "Pending changes inconsistent",
+              output: errors.join("\n"),
+              metadata: { errors, operations },
+            }
+          }
 
           const approvalQuestion = {
             header: "Finalize design changes",
@@ -928,7 +1271,21 @@ export const DesignFinalizeChangeTool = Tool.define<
           }
 
           if (label === "Approve") {
-            yield* design.applyAccumulatedChanges(ctx.sessionID, { source: "graph-agent" })
+            let applyError: unknown
+            yield* design.bufferApply(ctx.sessionID, { source: "graph-agent" }).pipe(
+              Effect.catchTag("GraphEngineError", (error) =>
+                Effect.sync(() => {
+                  applyError = error
+                }),
+              ),
+            )
+            if (applyError) {
+              return {
+                title: "Apply failed",
+                output: `Could not apply pending changes: ${applyError instanceof Error ? applyError.message : String(applyError)}`,
+                metadata: { ...baseMetadata, result: "failed", error: applyError },
+              }
+            }
             const version = yield* design.getCurrentVersion()
             return {
               title: "Changes applied",
@@ -938,7 +1295,7 @@ export const DesignFinalizeChangeTool = Tool.define<
           }
 
           if (label === "Abandon") {
-            yield* design.clearAccumulatedChanges(ctx.sessionID)
+            yield* design.bufferClear(ctx.sessionID)
             return {
               title: "Changes abandoned",
               output: "All pending changes have been discarded.",
@@ -1058,6 +1415,196 @@ export const DesignRequestApprovalTool = Tool.define<
   }),
 )
 
+function validatePendingOperations(
+  state: DesignTypes.GraphState,
+  operations: DesignChangeBuffer.BufferOperation[],
+): string[] {
+  const errors: string[] = []
+
+  const contextIds = new Set(state.contexts.map((c) => c.id))
+  const contextNames = new Set(state.contexts.map((c) => c.name))
+  const nodeIds = new Set(state.nodes.map((n) => n.id))
+  const nodeNames = new Set(state.nodes.map((n) => n.name))
+  const nodeAliases = new Set(state.nodes.flatMap((n) => n.aliases))
+  const prototypeIds = new Set(state.prototypes.map((p) => p.id))
+  const prototypeNames = new Set(state.prototypes.map((p) => p.name))
+  const existingEdgeKeys = new Set(state.edges.map((e) => DesignTypes.edgeKey(e.leftNodeId, e.rightNodeId)))
+
+  const pendingContextIds = new Set<string>()
+  const pendingContextNames = new Set<string>()
+  const pendingNodeIds = new Set<string>()
+  const pendingNodeNames = new Set<string>()
+  const pendingPrototypeIds = new Set<string>()
+  const pendingPrototypeNames = new Set<string>()
+  const pendingEdgeKeys = new Set<string>()
+
+  const nodeNameUsed = (name: string) => nodeNames.has(name) || pendingNodeNames.has(name) || nodeAliases.has(name)
+
+  for (const op of operations) {
+    switch (op.type) {
+      case "create_context": {
+        const payload = op.payload as { id?: string; name: string }
+        if (payload.id) {
+          if (contextIds.has(payload.id) || pendingContextIds.has(payload.id)) {
+            errors.push(`create_context ${payload.name}: context id ${payload.id} already exists`)
+          }
+          pendingContextIds.add(payload.id)
+        }
+        if (contextNames.has(payload.name) || pendingContextNames.has(payload.name)) {
+          errors.push(`create_context ${payload.name}: context name already exists`)
+        }
+        pendingContextNames.add(payload.name)
+        break
+      }
+      case "create_node": {
+        const payload = op.payload as GraphAgentTypes.NodeInput
+        if (payload.id) {
+          if (nodeIds.has(payload.id) || pendingNodeIds.has(payload.id)) {
+            errors.push(`create_node ${payload.name}: node id ${payload.id} already exists`)
+          }
+          pendingNodeIds.add(payload.id)
+        }
+        if (nodeNameUsed(payload.name)) {
+          errors.push(`create_node ${payload.name}: node name or alias already exists`)
+        }
+        pendingNodeNames.add(payload.name)
+        for (const alias of payload.aliases ?? []) {
+          if (nodeNameUsed(alias)) {
+            errors.push(`create_node ${payload.name}: alias ${alias} already exists`)
+          }
+          pendingNodeNames.add(alias)
+        }
+        break
+      }
+      case "create_prototype": {
+        const payload = op.payload as { id?: string; name: string }
+        if (payload.id) {
+          if (prototypeIds.has(payload.id) || pendingPrototypeIds.has(payload.id)) {
+            errors.push(`create_prototype ${payload.name}: prototype id ${payload.id} already exists`)
+          }
+          pendingPrototypeIds.add(payload.id)
+        }
+        if (prototypeNames.has(payload.name) || pendingPrototypeNames.has(payload.name)) {
+          errors.push(`create_prototype ${payload.name}: prototype name already exists`)
+        }
+        pendingPrototypeNames.add(payload.name)
+        break
+      }
+      case "create_edge": {
+        const payload = op.payload as GraphAgentTypes.EdgeInput
+        const key = DesignTypes.edgeKey(payload.leftNodeId, payload.rightNodeId)
+        if (existingEdgeKeys.has(key) || pendingEdgeKeys.has(key)) {
+          errors.push(`create_edge ${key}: edge already exists`)
+        }
+        pendingEdgeKeys.add(key)
+        break
+      }
+    }
+  }
+
+  for (const op of operations) {
+    switch (op.type) {
+      case "update_context": {
+        const payload = op.payload as { id: string; patch: { name?: string; semantics?: string } }
+        if (!contextIds.has(payload.id) && !pendingContextIds.has(payload.id)) {
+          errors.push(`update_context ${payload.id}: context not found`)
+        }
+        if (payload.patch.name && (contextNames.has(payload.patch.name) || pendingContextNames.has(payload.patch.name))) {
+          errors.push(`update_context ${payload.id}: name ${payload.patch.name} already exists`)
+        }
+        break
+      }
+      case "delete_context": {
+        const payload = op.payload as { id: string }
+        if (!contextIds.has(payload.id) && !pendingContextIds.has(payload.id)) {
+          errors.push(`delete_context ${payload.id}: context not found`)
+        }
+        break
+      }
+      case "update_node": {
+        const payload = op.payload as { id: string; patch: Partial<GraphAgentTypes.NodeInput> }
+        if (!nodeIds.has(payload.id) && !pendingNodeIds.has(payload.id)) {
+          errors.push(`update_node ${payload.id}: node not found`)
+        }
+        if (payload.patch.name && nodeNameUsed(payload.patch.name)) {
+          errors.push(`update_node ${payload.id}: name ${payload.patch.name} already exists`)
+        }
+        for (const alias of payload.patch.aliases ?? []) {
+          if (nodeNameUsed(alias)) {
+            errors.push(`update_node ${payload.id}: alias ${alias} already exists`)
+          }
+        }
+        if (payload.patch.contextId && !contextIds.has(payload.patch.contextId) && !pendingContextIds.has(payload.patch.contextId)) {
+          errors.push(`update_node ${payload.id}: context ${payload.patch.contextId} not found`)
+        }
+        break
+      }
+      case "delete_node": {
+        const payload = op.payload as { id: string }
+        if (!nodeIds.has(payload.id) && !pendingNodeIds.has(payload.id)) {
+          errors.push(`delete_node ${payload.id}: node not found`)
+        }
+        break
+      }
+      case "create_edge": {
+        const payload = op.payload as GraphAgentTypes.EdgeInput
+        if (!nodeIds.has(payload.leftNodeId) && !pendingNodeIds.has(payload.leftNodeId)) {
+          errors.push(`create_edge ${payload.leftNodeId}: left node not found`)
+        }
+        if (!nodeIds.has(payload.rightNodeId) && !pendingNodeIds.has(payload.rightNodeId)) {
+          errors.push(`create_edge ${payload.rightNodeId}: right node not found`)
+        }
+        if (!prototypeIds.has(payload.prototypeId) && !pendingPrototypeIds.has(payload.prototypeId)) {
+          errors.push(`create_edge ${payload.prototypeId}: prototype not found`)
+        }
+        break
+      }
+      case "update_edge": {
+        const payload = op.payload as { leftNodeId: string; rightNodeId: string; patch: Partial<GraphAgentTypes.EdgeInput> }
+        const key = DesignTypes.edgeKey(payload.leftNodeId, payload.rightNodeId)
+        if (!existingEdgeKeys.has(key)) {
+          errors.push(`update_edge ${key}: edge not found`)
+        }
+        if (payload.patch.prototypeId && !prototypeIds.has(payload.patch.prototypeId) && !pendingPrototypeIds.has(payload.patch.prototypeId)) {
+          errors.push(`update_edge ${key}: prototype ${payload.patch.prototypeId} not found`)
+        }
+        break
+      }
+      case "delete_edge": {
+        const payload = op.payload as { leftNodeId: string; rightNodeId: string }
+        const key = DesignTypes.edgeKey(payload.leftNodeId, payload.rightNodeId)
+        if (!existingEdgeKeys.has(key)) {
+          errors.push(`delete_edge ${key}: edge not found`)
+        }
+        break
+      }
+      case "update_prototype": {
+        const payload = op.payload as { id: string; patch: { name?: string; defaultSemantics?: string; parameterSchema?: Record<string, unknown> } }
+        if (!prototypeIds.has(payload.id) && !pendingPrototypeIds.has(payload.id)) {
+          errors.push(`update_prototype ${payload.id}: prototype not found`)
+        }
+        if (payload.patch.name && (prototypeNames.has(payload.patch.name) || pendingPrototypeNames.has(payload.patch.name))) {
+          errors.push(`update_prototype ${payload.id}: name ${payload.patch.name} already exists`)
+        }
+        break
+      }
+      case "delete_prototype": {
+        const payload = op.payload as { id: string }
+        if (!prototypeIds.has(payload.id) && !pendingPrototypeIds.has(payload.id)) {
+          errors.push(`delete_prototype ${payload.id}: prototype not found`)
+        }
+        const usedBy = state.edges.filter((e) => e.prototypeId === payload.id)
+        if (usedBy.length > 0) {
+          errors.push(`delete_prototype ${payload.id}: prototype is used by ${usedBy.length} edge(s)`)
+        }
+        break
+      }
+    }
+  }
+
+  return errors
+}
+
 function formatPendingDelta(state: DesignTypes.GraphState, delta: GraphAgentTypes.GraphDelta): Effect.Effect<string> {
   return Effect.gen(function* () {
     const nodeName = (id: string) => state.nodes.find((n) => n.id === id || n.name === id || n.aliases.includes(id))?.name ?? id
@@ -1089,7 +1636,7 @@ function formatPendingDelta(state: DesignTypes.GraphState, delta: GraphAgentType
       const left = nodeName(edge.leftNodeId)
       const right = nodeName(edge.rightNodeId)
       const proto = prototypeName(edge.prototypeId)
-      lines.push(`- 新增关系：${left} --[${proto}]--> ${right}`)
+      lines.push(`- 新增关系：${left} --[${proto}]-- ${right}`)
     }
 
     for (const update of delta.updateEdges ?? []) {
@@ -1097,13 +1644,13 @@ function formatPendingDelta(state: DesignTypes.GraphState, delta: GraphAgentType
       const right = nodeName(update.rightNodeId)
       const fields = Object.keys(update.patch ?? {})
       const detail = fields.length ? `（更新字段：${fields.join("、")}）` : ""
-      lines.push(`- 更新关系：${left} <-> ${right}${detail}`)
+      lines.push(`- 更新关系：${left} -- ${right}${detail}`)
     }
 
     for (const key of delta.deleteEdgeKeys ?? []) {
       const ids = key.split("::")
       if (ids.length === 2) {
-        lines.push(`- 删除关系：${nodeName(ids[0]!)} <-> ${nodeName(ids[1]!)}`)
+        lines.push(`- 删除关系：${nodeName(ids[0]!)} -- ${nodeName(ids[1]!)}`)
       } else {
         lines.push(`- 删除关系：${key}`)
       }
@@ -1130,12 +1677,17 @@ export const GraphAgentDesignTools = {
   DesignGetConceptTool,
   DesignListPrototypesTool,
   DesignDefineContextTool,
+  DesignUpdateContextTool,
+  DesignWithdrawContextTool,
   DesignDefineConceptTool,
   DesignRefineConceptTool,
   DesignWithdrawConceptTool,
   DesignRelateConceptsTool,
   DesignWithdrawRelationTool,
   DesignDefineRelationPrototypeTool,
+  DesignWithdrawRelationPrototypeTool,
+  DesignListBufferOperationsTool,
+  DesignUndoBufferOperationTool,
   DesignRequestApprovalTool,
   DesignFinalizeChangeTool,
 }

@@ -10,7 +10,7 @@ import { DesignStore } from "./store/store"
 import * as GraphAgentTypes from "./agent/types"
 import { VersionSync } from "./system/version-sync"
 import { TemporaryWorkingSet } from "./system/temporary-working-set"
-import { ChangeAccumulator } from "./system/change-accumulator"
+import { DesignChangeBuffer } from "./system/design-change-buffer"
 import { PlanHandoff } from "./plan-handoff"
 import { Provider } from "@/provider/provider"
 
@@ -29,8 +29,11 @@ export interface Interface {
   readonly updateEdge: GraphEngine.Interface["updateEdge"]
   readonly deleteEdge: GraphEngine.Interface["deleteEdge"]
   readonly createPrototype: GraphEngine.Interface["createPrototype"]
+  readonly updatePrototype: GraphEngine.Interface["updatePrototype"]
+  readonly deletePrototype: GraphEngine.Interface["deletePrototype"]
   readonly listPrototypes: GraphEngine.Interface["listPrototypes"]
   readonly getPrototype: GraphEngine.Interface["getPrototype"]
+  readonly deleteContext: GraphEngine.Interface["deleteContext"]
   readonly touchContext: WorkingSet.Interface["touchContext"]
   readonly touchNode: WorkingSet.Interface["touchNode"]
   readonly listNodes: GraphEngine.Interface["listNodes"]
@@ -59,19 +62,15 @@ export interface Interface {
   readonly expandTemporaryWorkingSetNode: TemporaryWorkingSet.Interface["expandNode"]
   readonly resetTemporaryWorkingSet: TemporaryWorkingSet.Interface["reset"]
   readonly destroyTemporaryWorkingSet: TemporaryWorkingSet.Interface["destroy"]
-  readonly getChangeAccumulator: ChangeAccumulator.Interface["getPendingDelta"]
-  readonly addAccumulatedNode: ChangeAccumulator.Interface["addNode"]
-  readonly updateAccumulatedNode: ChangeAccumulator.Interface["updateNode"]
-  readonly deleteAccumulatedNode: ChangeAccumulator.Interface["deleteNode"]
-  readonly addAccumulatedEdge: ChangeAccumulator.Interface["addEdge"]
-  readonly updateAccumulatedEdge: ChangeAccumulator.Interface["updateEdge"]
-  readonly deleteAccumulatedEdge: ChangeAccumulator.Interface["deleteEdge"]
-  readonly applyAccumulatedChanges: (
+  readonly bufferAddOperation: DesignChangeBuffer.Interface["addOperation"]
+  readonly bufferListOperations: DesignChangeBuffer.Interface["listOperations"]
+  readonly bufferUndoOperation: DesignChangeBuffer.Interface["undoOperation"]
+  readonly bufferGetDelta: DesignChangeBuffer.Interface["getDelta"]
+  readonly bufferApply: (
     sessionID: string,
     options?: { source?: DesignTypes.VersionBumpSource },
   ) => Effect.Effect<void, GraphEngine.GraphEngineError>
-  readonly clearAccumulatedChanges: ChangeAccumulator.Interface["clear"]
-  readonly getAccumulatedGraphState: ChangeAccumulator.Interface["getMergedState"]
+  readonly bufferClear: DesignChangeBuffer.Interface["clear"]
   readonly findContextByNameOrId: (nameOrId: string) => Effect.Effect<DesignTypes.BoundedContext | undefined>
   readonly findNodeByNameOrId: (nameOrId: string) => Effect.Effect<DesignTypes.Node | undefined>
   readonly listEdgesForNode: GraphEngine.Interface["listEdgesForNode"]
@@ -86,7 +85,7 @@ type DesignState = {
   readonly eventLog: EventLog.Interface
   readonly versionSync: VersionSync.Interface
   readonly temporaryWorkingSet: TemporaryWorkingSet.Interface
-  readonly changeAccumulator: ChangeAccumulator.Interface
+  readonly changeBuffer: DesignChangeBuffer.Interface
   readonly store: DesignStore.Store
 }
 
@@ -111,7 +110,7 @@ export const layer = (options?: LayerOptions) =>
         const eventLog = yield* EventLog.makeEventLog()
         const versionSync = VersionSync.make(eventLog)
         const temporaryWorkingSet = TemporaryWorkingSet.make(graph, workingSet)
-        const changeAccumulator = ChangeAccumulator.make(graph)
+        const changeBuffer = DesignChangeBuffer.make(graph)
 
         if (loaded.nodes.length > 0 || loaded.contexts.length > 0) {
           for (const ctx of loaded.contexts) {
@@ -156,7 +155,7 @@ export const layer = (options?: LayerOptions) =>
           }
         }
 
-        return { graph, workingSet, eventLog, versionSync, store, temporaryWorkingSet, changeAccumulator }
+        return { graph, workingSet, eventLog, versionSync, store, temporaryWorkingSet, changeBuffer }
       }),
     )
 
@@ -334,8 +333,36 @@ export const layer = (options?: LayerOptions) =>
         }),
       ),
     )
+    const updatePrototype = Effect.fn("Design.updatePrototype")((id: string, input: Parameters<GraphEngine.Interface["updatePrototype"]>[1]) =>
+      use((state) =>
+        Effect.gen(function* () {
+          const proto = yield* state.graph.updatePrototype(id, input)
+          const event = yield* state.eventLog.append({ eventType: "prototype_updated", affectedNodeIds: [] })
+          yield* persistMutation(event)
+          return proto
+        }),
+      ),
+    )
+    const deletePrototype = Effect.fn("Design.deletePrototype")((id: string) =>
+      use((state) =>
+        Effect.gen(function* () {
+          yield* state.graph.deletePrototype(id)
+          const event = yield* state.eventLog.append({ eventType: "prototype_deleted", affectedNodeIds: [] })
+          yield* persistMutation(event)
+        }),
+      ),
+    )
     const listPrototypes = Effect.fn("Design.listPrototypes")(() => use((state) => state.graph.listPrototypes()))
     const getPrototype = Effect.fn("Design.getPrototype")((id: string) => use((state) => state.graph.getPrototype(id)))
+    const deleteContext = Effect.fn("Design.deleteContext")((id: string) =>
+      use((state) =>
+        Effect.gen(function* () {
+          yield* state.graph.deleteContext(id)
+          const event = yield* state.eventLog.append({ eventType: "context_deleted", affectedNodeIds: [] })
+          yield* persistMutation(event)
+        }),
+      ),
+    )
 
     const touchContext = Effect.fn("Design.touchContext")((contextId: string) =>
       use((state) => state.workingSet.touchContext(contextId)),
@@ -588,8 +615,11 @@ export const layer = (options?: LayerOptions) =>
       updateEdge,
       deleteEdge,
       createPrototype,
+      updatePrototype,
+      deletePrototype,
       listPrototypes,
       getPrototype,
+      deleteContext,
       touchContext,
       touchNode,
       listNodes: () => use((state) => state.graph.listNodes()),
@@ -614,32 +644,233 @@ export const layer = (options?: LayerOptions) =>
         use((state) => state.temporaryWorkingSet.expandNode(sessionID, nodeId)),
       resetTemporaryWorkingSet: (sessionID: string) => use((state) => state.temporaryWorkingSet.reset(sessionID)),
       destroyTemporaryWorkingSet: (sessionID: string) => use((state) => state.temporaryWorkingSet.destroy(sessionID)),
-      getChangeAccumulator: (sessionID: string) => use((state) => state.changeAccumulator.getPendingDelta(sessionID)),
-      addAccumulatedNode: (sessionID: string, input: GraphAgentTypes.NodeInput) =>
-        use((state) => state.changeAccumulator.addNode(sessionID, input)),
-      updateAccumulatedNode: (sessionID: string, id: string, patch: Partial<GraphAgentTypes.NodeInput>) =>
-        use((state) => state.changeAccumulator.updateNode(sessionID, id, patch)),
-      deleteAccumulatedNode: (sessionID: string, id: string) =>
-        use((state) => state.changeAccumulator.deleteNode(sessionID, id)),
-      addAccumulatedEdge: (sessionID: string, input: GraphAgentTypes.EdgeInput) =>
-        use((state) => state.changeAccumulator.addEdge(sessionID, input)),
-      updateAccumulatedEdge: (
-        sessionID: string,
-        leftNodeId: string,
-        rightNodeId: string,
-        patch: Partial<GraphAgentTypes.EdgeInput>,
-      ) => use((state) => state.changeAccumulator.updateEdge(sessionID, leftNodeId, rightNodeId, patch)),
-      deleteAccumulatedEdge: (sessionID: string, leftNodeId: string, rightNodeId: string) =>
-        use((state) => state.changeAccumulator.deleteEdge(sessionID, leftNodeId, rightNodeId)),
-      applyAccumulatedChanges: (sessionID: string, options?: { source?: DesignTypes.VersionBumpSource }) =>
+      bufferAddOperation: (sessionID: string, operation: Omit<DesignChangeBuffer.BufferOperation, "id">) =>
+        use((state) => state.changeBuffer.addOperation(sessionID, operation)),
+      bufferListOperations: (sessionID: string) => use((state) => state.changeBuffer.listOperations(sessionID)),
+      bufferUndoOperation: (sessionID: string, operationId: string, cascade?: boolean) =>
+        use((state) => state.changeBuffer.undoOperation(sessionID, operationId, cascade)),
+      bufferGetDelta: (sessionID: string) => use((state) => state.changeBuffer.getDelta(sessionID)),
+      bufferApply: (sessionID: string, options?: { source?: DesignTypes.VersionBumpSource }) =>
         use((state) =>
           Effect.gen(function* () {
-            const delta = yield* state.changeAccumulator.apply(sessionID)
-            yield* applyRawDelta(delta, options?.source)
+            const operations = yield* state.changeBuffer.listOperations(sessionID)
+            yield* state.store.transaction((txStore) =>
+              Effect.gen(function* () {
+                const now = yield* Clock.currentTimeMillis
+                const events: DesignTypes.EventNode[] = []
+
+                for (const op of operations) {
+                  switch (op.type) {
+                    case "create_context": {
+                      const payload = op.payload as { id: string; name: string; semantics?: string }
+                      const created = yield* state.graph.createContext({
+                        id: payload.id,
+                        name: payload.name,
+                        semantics: payload.semantics,
+                      })
+                      events.push(
+                        yield* state.eventLog.append({
+                          eventType: "context_created",
+                          affectedNodeIds: [created.id],
+                        }),
+                      )
+                      break
+                    }
+                    case "update_context": {
+                      const payload = op.payload as {
+                        id: string
+                        patch: { name?: string; semantics?: string }
+                      }
+                      yield* state.graph.updateContext(payload.id, payload.patch)
+                      events.push(
+                        yield* state.eventLog.append({
+                          eventType: "context_updated",
+                          affectedNodeIds: [payload.id],
+                        }),
+                      )
+                      break
+                    }
+                    case "delete_context": {
+                      const payload = op.payload as { id: string }
+                      yield* state.graph.deleteContext(payload.id)
+                      events.push(
+                        yield* state.eventLog.append({
+                          eventType: "context_deleted",
+                          affectedNodeIds: [payload.id],
+                        }),
+                      )
+                      break
+                    }
+                    case "create_prototype": {
+                      const payload = op.payload as {
+                        id: string
+                        name: string
+                        defaultSemantics?: string
+                        parameterSchema?: Record<string, unknown>
+                      }
+                      const created = yield* state.graph.createPrototype({
+                        id: payload.id,
+                        name: payload.name,
+                        defaultSemantics: payload.defaultSemantics,
+                        parameterSchema: payload.parameterSchema,
+                      })
+                      events.push(
+                        yield* state.eventLog.append({
+                          eventType: "prototype_created",
+                          affectedNodeIds: [created.id],
+                        }),
+                      )
+                      break
+                    }
+                    case "update_prototype": {
+                      const payload = op.payload as {
+                        id: string
+                        patch: {
+                          name?: string
+                          defaultSemantics?: string
+                          parameterSchema?: Record<string, unknown>
+                        }
+                      }
+                      yield* state.graph.updatePrototype(payload.id, payload.patch)
+                      events.push(
+                        yield* state.eventLog.append({
+                          eventType: "prototype_updated",
+                          affectedNodeIds: [payload.id],
+                        }),
+                      )
+                      break
+                    }
+                    case "delete_prototype": {
+                      const payload = op.payload as { id: string }
+                      yield* state.graph.deletePrototype(payload.id)
+                      events.push(
+                        yield* state.eventLog.append({
+                          eventType: "prototype_deleted",
+                          affectedNodeIds: [payload.id],
+                        }),
+                      )
+                      break
+                    }
+                  }
+                }
+
+                for (const op of operations) {
+                  switch (op.type) {
+                    case "create_node": {
+                      const payload = op.payload as GraphAgentTypes.NodeInput
+                      const created = yield* state.graph.createNode({
+                        id: payload.id ?? crypto.randomUUID(),
+                        name: payload.name,
+                        contextId: payload.contextId,
+                        kind: payload.kind,
+                        defaultSemantics: payload.defaultSemantics,
+                        aliases: payload.aliases ? [...payload.aliases] : undefined,
+                        connectedEdges: payload.connectedEdges ? [...payload.connectedEdges] : undefined,
+                        createdAt: payload.createdAt ?? now,
+                        updatedAt: payload.updatedAt ?? now,
+                        retired: payload.retired,
+                      })
+                      events.push(
+                        yield* state.eventLog.append({
+                          eventType: "node_created",
+                          affectedNodeIds: [created.id],
+                        }),
+                      )
+                      break
+                    }
+                    case "update_node": {
+                      const payload = op.payload as {
+                        id: string
+                        patch: Partial<GraphAgentTypes.NodeInput>
+                      }
+                      yield* state.graph.updateNode(payload.id, payload.patch)
+                      events.push(
+                        yield* state.eventLog.append({
+                          eventType: "node_updated",
+                          affectedNodeIds: [payload.id],
+                        }),
+                      )
+                      break
+                    }
+                    case "delete_node": {
+                      const payload = op.payload as { id: string }
+                      yield* state.graph.deleteNode(payload.id)
+                      events.push(
+                        yield* state.eventLog.append({
+                          eventType: "node_deleted",
+                          affectedNodeIds: [payload.id],
+                        }),
+                      )
+                      break
+                    }
+                    case "create_edge": {
+                      const payload = op.payload as GraphAgentTypes.EdgeInput
+                      yield* state.graph.createEdge({
+                        leftNodeId: payload.leftNodeId,
+                        rightNodeId: payload.rightNodeId,
+                        prototypeId: payload.prototypeId,
+                        parameters: { ...(payload.parameters ?? {}) },
+                        createdAt: payload.createdAt ?? now,
+                        updatedAt: payload.updatedAt ?? now,
+                      })
+                      events.push(
+                        yield* state.eventLog.append({
+                          eventType: "edge_created",
+                          affectedNodeIds: [payload.leftNodeId, payload.rightNodeId],
+                          affectedEdgeKeys: [
+                            DesignTypes.edgeKey(payload.leftNodeId, payload.rightNodeId),
+                          ],
+                        }),
+                      )
+                      break
+                    }
+                    case "update_edge": {
+                      const payload = op.payload as {
+                        leftNodeId: string
+                        rightNodeId: string
+                        patch: Partial<GraphAgentTypes.EdgeInput>
+                      }
+                      yield* state.graph.updateEdge(payload.leftNodeId, payload.rightNodeId, payload.patch)
+                      events.push(
+                        yield* state.eventLog.append({
+                          eventType: "edge_updated",
+                          affectedNodeIds: [payload.leftNodeId, payload.rightNodeId],
+                          affectedEdgeKeys: [
+                            DesignTypes.edgeKey(payload.leftNodeId, payload.rightNodeId),
+                          ],
+                        }),
+                      )
+                      break
+                    }
+                    case "delete_edge": {
+                      const payload = op.payload as { leftNodeId: string; rightNodeId: string }
+                      yield* state.graph.deleteEdge(payload.leftNodeId, payload.rightNodeId)
+                      events.push(
+                        yield* state.eventLog.append({
+                          eventType: "edge_deleted",
+                          affectedNodeIds: [payload.leftNodeId, payload.rightNodeId],
+                          affectedEdgeKeys: [
+                            DesignTypes.edgeKey(payload.leftNodeId, payload.rightNodeId),
+                          ],
+                        }),
+                      )
+                      break
+                    }
+                  }
+                }
+
+                const graphState = yield* state.graph.getState()
+                yield* txStore.saveGraphState(graphState)
+                for (const event of events) {
+                  yield* txStore.appendEvent(event)
+                }
+              }),
+            )
+            yield* state.versionSync.bumpVersion(options?.source ?? "graph-agent")
+            yield* state.changeBuffer.clear(sessionID)
           }),
         ),
-      clearAccumulatedChanges: (sessionID: string) => use((state) => state.changeAccumulator.clear(sessionID)),
-      getAccumulatedGraphState: (sessionID: string) => use((state) => state.changeAccumulator.getMergedState(sessionID)),
+      bufferClear: (sessionID: string) => use((state) => state.changeBuffer.clear(sessionID)),
       findContextByNameOrId,
       findNodeByNameOrId,
       summarizeGraphState,
@@ -651,14 +882,14 @@ export const defaultLayer = Layer.suspend(() =>
   layer().pipe(
     Layer.provide(DesignStore.defaultLayer),
     Layer.provide(TemporaryWorkingSet.defaultLayer),
-    Layer.provide(ChangeAccumulator.defaultLayer),
+    Layer.provide(DesignChangeBuffer.defaultLayer),
   ),
 )
 
 export const node = LayerNode.make({
   service: Service,
   layer: defaultLayer,
-  deps: [DesignStore.node, TemporaryWorkingSet.node, ChangeAccumulator.node],
+  deps: [DesignStore.node, TemporaryWorkingSet.node, DesignChangeBuffer.node],
 })
 
 export * as Design from "./design"

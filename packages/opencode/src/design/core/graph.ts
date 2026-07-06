@@ -42,8 +42,11 @@ export interface Interface {
     defaultSemantics?: string
     parameterSchema?: Record<string, unknown>
   }) => Effect.Effect<DesignTypes.RelationPrototype>
+  readonly updatePrototype: (id: string, input: Partial<Omit<DesignTypes.RelationPrototype, "id">>) => Effect.Effect<DesignTypes.RelationPrototype, GraphEngineError>
+  readonly deletePrototype: (id: string) => Effect.Effect<void>
   readonly getPrototype: (id: string) => Effect.Effect<DesignTypes.RelationPrototype | undefined>
   readonly listPrototypes: () => Effect.Effect<DesignTypes.RelationPrototype[]>
+  readonly deleteContext: (id: string) => Effect.Effect<void>
 
   readonly createEdge: (
     input: Omit<DesignTypes.Edge, "createdAt" | "updatedAt"> & Partial<Pick<DesignTypes.Edge, "createdAt" | "updatedAt">>,
@@ -175,6 +178,10 @@ export const makeEngine = Effect.fn("GraphEngine.make")(function* () {
     return ctx
   })
 
+  const deleteContext = Effect.fn("GraphEngine.deleteContext")(function* (id) {
+    state.contexts = state.contexts.filter((c) => c.id !== id)
+  })
+
   const createPrototype = Effect.fn("GraphEngine.createPrototype")(function* (input) {
     const proto: MutableState["prototypes"][number] = {
       id: input.id ?? makeId("proto"),
@@ -184,6 +191,19 @@ export const makeEngine = Effect.fn("GraphEngine.make")(function* () {
     }
     state.prototypes.push(proto)
     return proto
+  })
+
+  const updatePrototype = Effect.fn("GraphEngine.updatePrototype")(function* (id, input) {
+    const proto = state.prototypes.find((p) => p.id === id)
+    if (!proto) return yield* new GraphEngineError({ message: `Prototype not found: ${id}` })
+    if (input.name !== undefined) proto.name = input.name
+    if (input.defaultSemantics !== undefined) proto.defaultSemantics = input.defaultSemantics
+    if (input.parameterSchema !== undefined) proto.parameterSchema = input.parameterSchema
+    return proto
+  })
+
+  const deletePrototype = Effect.fn("GraphEngine.deletePrototype")(function* (id) {
+    state.prototypes = state.prototypes.filter((p) => p.id !== id)
   })
 
   const getPrototype = Effect.fnUntraced(function* (id: string) {
@@ -288,7 +308,10 @@ export const makeEngine = Effect.fn("GraphEngine.make")(function* () {
     getContext,
     listContexts,
     updateContext,
+    deleteContext,
     createPrototype,
+    updatePrototype,
+    deletePrototype,
     getPrototype,
     listPrototypes,
     createEdge,

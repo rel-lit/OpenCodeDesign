@@ -1,0 +1,237 @@
+import { Context, Effect, Layer } from "effect"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { DesignTypes } from "../core/types"
+import * as GraphAgentTypes from "../agent/types"
+import { GraphEngine } from "../core/graph"
+
+export type BufferOperationType =
+  | "create_context"
+  | "update_context"
+  | "delete_context"
+  | "create_node"
+  | "update_node"
+  | "delete_node"
+  | "create_edge"
+  | "update_edge"
+  | "delete_edge"
+  | "create_prototype"
+  | "update_prototype"
+  | "delete_prototype"
+
+export interface BufferOperation {
+  id: string
+  type: BufferOperationType
+  description: string
+  payload: unknown
+}
+
+export class BufferError {
+  readonly _tag = "BufferError"
+  constructor(readonly message: string, readonly blockedBy?: string[]) {}
+}
+
+export interface Interface {
+  readonly listOperations: (sessionID: string) => Effect.Effect<BufferOperation[]>
+  readonly addOperation: (sessionID: string, operation: Omit<BufferOperation, "id">) => Effect.Effect<BufferOperation>
+  readonly undoOperation: (
+    sessionID: string,
+    operationId: string,
+    cascade?: boolean,
+  ) => Effect.Effect<void, BufferError>
+  readonly getDelta: (sessionID: string) => Effect.Effect<GraphAgentTypes.GraphDelta>
+  readonly apply: (sessionID: string) => Effect.Effect<GraphAgentTypes.GraphDelta>
+  readonly clear: (sessionID: string) => Effect.Effect<void>
+}
+
+export class Service extends Context.Service<Service, Interface>()("@opencode/DesignChangeBuffer") {}
+
+const ensureSession = (store: Map<string, BufferOperation[]>, sessionID: string) => {
+  if (!store.has(sessionID)) store.set(sessionID, [])
+}
+
+const operationPayloadId = (op: BufferOperation): string | undefined => {
+  const payload = op.payload as { id?: string }
+  return payload.id
+}
+
+const isReferencedBy = (op: BufferOperation, candidate: BufferOperation): boolean => {
+  const opId = operationPayloadId(op)
+  if (!opId) return false
+
+  switch (op.type) {
+    case "create_context":
+    case "update_context": {
+      if (candidate.type !== "create_node") return false
+      const payload = candidate.payload as { contextId?: string }
+      return payload.contextId === opId
+    }
+    case "create_node":
+    case "update_node": {
+      if (candidate.type !== "create_edge" && candidate.type !== "update_edge" && candidate.type !== "delete_edge") {
+        return false
+      }
+      const payload = candidate.payload as { leftNodeId?: string; rightNodeId?: string }
+      return payload.leftNodeId === opId || payload.rightNodeId === opId
+    }
+    case "create_prototype":
+    case "update_prototype": {
+      if (candidate.type !== "create_edge" && candidate.type !== "update_edge") return false
+      const payload = candidate.payload as { prototypeId?: string }
+      return payload.prototypeId === opId
+    }
+    default:
+      return false
+  }
+}
+
+const collectDependentOperations = (operations: BufferOperation[], targetIndex: number): number[] => {
+  const dependent = new Set<number>()
+  const queue = [targetIndex]
+
+  while (queue.length > 0) {
+    const currentIndex = queue.shift()!
+    const currentOp = operations[currentIndex]
+    if (!currentOp) continue
+
+    for (let i = currentIndex + 1; i < operations.length; i++) {
+      if (dependent.has(i)) continue
+      const candidate = operations[i]
+      if (!candidate) continue
+      if (isReferencedBy(currentOp, candidate)) {
+        dependent.add(i)
+        queue.push(i)
+      }
+    }
+  }
+
+  return Array.from(dependent).sort((a, b) => b - a)
+}
+
+export const make = (_graph: GraphEngine.Interface) => {
+  const store = new Map<string, BufferOperation[]>()
+
+  const listOperations = Effect.fn("DesignChangeBuffer.listOperations")(function* (sessionID: string) {
+    return store.get(sessionID) ?? []
+  })
+
+  const addOperation = Effect.fn("DesignChangeBuffer.addOperation")(
+    function* (sessionID: string, operation: Omit<BufferOperation, "id">) {
+      ensureSession(store, sessionID)
+      const operations = store.get(sessionID)!
+      const id = crypto.randomUUID()
+      const bufferOperation: BufferOperation = { ...operation, id }
+      operations.push(bufferOperation)
+      return bufferOperation
+    },
+  )
+
+  const undoOperation = Effect.fn("DesignChangeBuffer.undoOperation")(
+    function* (sessionID: string, operationId: string, cascade = false) {
+      const operations = store.get(sessionID)
+      if (!operations) return
+
+      const index = operations.findIndex((op) => op.id === operationId)
+      if (index === -1) return
+
+      const dependentIndexes = collectDependentOperations(operations, index)
+
+      if (dependentIndexes.length > 0 && !cascade) {
+        const blockedBy = dependentIndexes.map((i) => operations[i]!.id).reverse()
+        return yield* Effect.fail(
+          new BufferError(
+            `Operation '${operationId}' is referenced by later operations. Undo those first or use cascade: true.`,
+            blockedBy,
+          ),
+        )
+      }
+
+      const indexesToRemove = new Set([index, ...dependentIndexes])
+      const next = operations.filter((_, i) => !indexesToRemove.has(i))
+      store.set(sessionID, next)
+    },
+  )
+
+  const getDelta = Effect.fn("DesignChangeBuffer.getDelta")(function* (sessionID: string) {
+    const operations = store.get(sessionID) ?? []
+    const delta: GraphAgentTypes.GraphDelta = {}
+
+    for (const op of operations) {
+      switch (op.type) {
+        case "create_node": {
+          delta.addNodes = [...(delta.addNodes ?? []), op.payload as GraphAgentTypes.NodeInput]
+          break
+        }
+        case "update_node": {
+          const payload = op.payload as { id: string; patch: Partial<GraphAgentTypes.NodeInput> }
+          delta.updateNodes = [...(delta.updateNodes ?? []), payload]
+          break
+        }
+        case "delete_node": {
+          const payload = op.payload as { id: string }
+          delta.deleteNodeIds = [...(delta.deleteNodeIds ?? []), payload.id]
+          break
+        }
+        case "create_edge": {
+          delta.addEdges = [...(delta.addEdges ?? []), op.payload as GraphAgentTypes.EdgeInput]
+          break
+        }
+        case "update_edge": {
+          const payload = op.payload as {
+            leftNodeId: string
+            rightNodeId: string
+            patch: Partial<GraphAgentTypes.EdgeInput>
+          }
+          delta.updateEdges = [...(delta.updateEdges ?? []), payload]
+          break
+        }
+        case "delete_edge": {
+          const payload = op.payload as { leftNodeId: string; rightNodeId: string }
+          delta.deleteEdgeKeys = [
+            ...(delta.deleteEdgeKeys ?? []),
+            DesignTypes.edgeKey(payload.leftNodeId, payload.rightNodeId),
+          ]
+          break
+        }
+      }
+    }
+
+    return delta
+  })
+
+  const apply = Effect.fn("DesignChangeBuffer.apply")(function* (sessionID: string) {
+    const delta = yield* getDelta(sessionID)
+    store.delete(sessionID)
+    return delta
+  })
+
+  const clear = Effect.fn("DesignChangeBuffer.clear")(function* (sessionID: string) {
+    store.delete(sessionID)
+  })
+
+  return {
+    listOperations,
+    addOperation,
+    undoOperation,
+    getDelta,
+    apply,
+    clear,
+  } satisfies Interface
+}
+
+export const layer = Layer.effect(
+  Service,
+  Effect.gen(function* () {
+    const graph = yield* GraphEngine.Service
+    return Service.of(make(graph))
+  }),
+)
+
+export const defaultLayer = layer.pipe(Layer.provide(GraphEngine.defaultLayer))
+
+export const node = LayerNode.make({
+  service: Service,
+  layer: defaultLayer,
+  deps: [GraphEngine.node],
+})
+
+export * as DesignChangeBuffer from "./design-change-buffer"
