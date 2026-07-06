@@ -136,6 +136,28 @@ export const layer = Layer.effect(
             "*.env.*": "ask",
             "*.env.example": "allow",
           },
+          // Design graph mutation tools should only be used inside the design agent
+          design_define_context: "deny",
+          design_define_concept: "deny",
+          design_refine_concept: "deny",
+          design_withdraw_concept: "deny",
+          design_relate_concepts: "deny",
+          design_withdraw_relation: "deny",
+          design_define_relation_prototype: "deny",
+          design_get_temporary_working_set: "deny",
+          design_expand_node: "deny",
+          design_search_graph: "deny",
+          design_get_state_summary: "deny",
+          design_get_context: "deny",
+          design_get_concept: "deny",
+          design_list_prototypes: "deny",
+          design_request_approval: "deny",
+          design_finalize_change: "deny",
+          // Design subagents should only be invoked from the design agent
+          task: {
+            "design-graph": "deny",
+            "design-search": "deny",
+          },
         })
 
         const user = Permission.fromConfig(cfg.permission ?? {})
@@ -276,6 +298,10 @@ export const layer = Layer.effect(
               Permission.fromConfig({
                 question: "allow",
                 plan_enter: "allow",
+                task: {
+                  "design-graph": "deny",
+                  "design-search": "deny",
+                },
               }),
               user,
             ),
@@ -292,7 +318,8 @@ export const layer = Layer.effect(
                 question: "allow",
                 plan_exit: "allow",
                 task: {
-                  general: "deny",
+                  "design-graph": "deny",
+                  "design-search": "deny",
                 },
                 external_directory: {
                   [path.join(Global.Path.data, "plans", "*")]: "allow",
