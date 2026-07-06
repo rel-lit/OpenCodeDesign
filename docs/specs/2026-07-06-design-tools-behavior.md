@@ -23,6 +23,7 @@
 | `design_get_temporary_working_set` | 返回当前子代理 session 的临时工作集摘要 | 工作集条目概要 |
 | `design_search_graph` | 按名称/别名搜索 concept 或 context，匹配结果加入临时工作集 | 匹配项概要（含自身 ID） |
 | `design_expand_node` | 展开指定 concept 的一跳邻居，邻居加入临时工作集 | 邻居概要 + 关系概要（含自身 ID） |
+| `design_expand_node_focused` | 展开指定 concept 的一跳邻居，返回中心节点、所有邻居节点、以及它们之间关系的完整内容 | 中心节点完整内容；邻居节点完整内容；相关关系完整内容 |
 | `design_get_context` | 返回单个 context 的完整语义及其包含的 concepts 列表 | context 自身完整内容；concepts 只给概要（含 ID） |
 | `design_get_concept` | 返回单个 concept 的完整语义及其关系列表 | concept 自身完整内容；relations 只给概要（含 ID） |
 | `design_get_relation` | 返回指定两个 concept 之间关系的完整内容 | edge 完整内容（含自身 from/to 名称和 ID，prototype 名称和 ID，parameters） |
@@ -74,7 +75,101 @@ Relations:
 
 注意：concept 自身的 ID 保留；relations 中外部实体的 ID 替换为名称。每条关系只显示概要，不展开 `parameters`。
 
-#### `design_get_relation` 输出示例
+#### `design_expand_node_focused`
+
+参数：
+
+```ts
+{
+  name_or_id: string  // 中心 concept 名称或 ID
+}
+```
+
+行为：
+- 查找中心 concept。
+- 查找所有与中心 concept 直接相连的关系（边）。
+- 对每个关系，查找另一端的概念作为邻居。
+- 返回：
+  - 中心 concept 的完整内容（含自身 ID）
+  - 所有邻居 concept 的完整内容（含自身 ID）
+  - 中心节点与每个邻居之间关系的完整内容
+
+注意：关系本身没有独立 ID。关系由 `from` 和 `to` 两个 concept 的 ID 唯一标识。查询关系时必须提供这两个 concept 的 ID。
+
+输出示例：
+
+```
+Center: 船 (node-xyz789)
+Context: 战斗系统
+Kind: entity
+Aliases: 飞船
+Semantics: 玩家操控的水上载具，可装备武器，有耐久度。
+
+Neighbors:
+
+[邻居 1]
+Concept: 武器 (node-uvw456)
+Context: 战斗系统
+Kind: entity
+Aliases: none
+Semantics: 可装备的攻击性物品。
+
+Relation: 船 --[装备]--> 武器
+From: 船 (node-xyz789)
+To: 武器 (node-uvw456)
+Prototype: 装备 (proto-def012)
+Semantics: 船可以装备武器作为攻击性组件
+Parameters:
+  maxSlots: 4
+  slotTypes: ["主炮", "副炮"]
+
+[邻居 2]
+Concept: 战斗系统 (ctx-abc123)
+Context: N/A
+Kind: bounded_context
+Aliases: none
+Semantics: 游戏核心战斗机制。
+
+Relation: 船 --[属于]--> 战斗系统
+From: 船 (node-xyz789)
+To: 战斗系统 (ctx-abc123)
+Prototype: 属于 (proto-ghi789)
+Semantics: 概念属于某个限界上下文
+Parameters: {}
+```
+
+异常：
+- 中心 concept 不存在：返回错误 "Concept 'X' not found"
+
+#### `design_get_relation`
+
+参数：
+
+```ts
+{
+  from: string  // 源 concept 名称或 ID
+  to: string    // 目标 concept 名称或 ID
+}
+```
+
+行为：
+- 查找 from 和 to 两个 concept。
+- 查找它们之间的关系（边）。
+- 如果关系存在，返回完整内容。
+- 如果关系不存在，返回错误 "No relation between 'X' and 'Y'"
+
+注意：关系没有独立 ID，只能通过 `from` 和 `to` 查询。
+
+输出示例见上文。
+
+异常：
+- from 不存在：错误 "Source concept 'X' not found"
+- to 不存在：错误 "Target concept 'Y' not found"
+- 关系不存在：错误 "No relation between 'X' and 'Y'"
+
+#### `design_get_prototype`
+
+ 输出示例
 
 ```
 Relation: 船 --[装备]--> 武器
