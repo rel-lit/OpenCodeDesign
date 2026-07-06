@@ -165,6 +165,28 @@ future 可能有场景：build agent 也需要读取 design 图（比如"按设�
 
 权限系统可以精确到每个 tool name，所以这是自然扩展。
 
+### Task 子代理的权限派生机制
+
+当父 Agent 通过 `task` 工具 spawn 子代理时，子代理 session 的权限不是直接使用子 Agent 的 permission，而是通过 `deriveSubagentSessionPermission` 派生：
+
+1. **调用前检查**：`task` 工具先检查父 Agent 是否有权调用该 `subagent_type`。例如 build agent 的 permission 里 `task: { "design-graph": "deny" }` 会直接拒绝调用。
+
+2. **子代理 session permission 派生**：`deriveSubagentSessionPermission` 只继承父 session 的：
+   - `external_directory` 规则
+   - 所有 `deny` 规则
+
+   然后默认 deny `todowrite` 和 `task`（除非子 Agent 自身 permission 显式 allow）。
+
+3. **子 Agent 自身 permission 的作用**：子 Agent 定义中的 permission 主要决定：
+   - 它自己理论上能使用哪些工具（如 design-graph allow design 工具）。
+   - 它是否能继续 spawn 子代理（`task`）或使用 `todowrite`。
+
+4. **不对称性**：父代理可以通过自己的 deny 规则**进一步限制**子代理，但**不能**给子代理开放子 Agent 自身未 allow 的工具。因为 `deriveSubagentSessionPermission` 只继承父 session 的 deny，不继承 allow。
+
+5. **运行时合并**：`session/prompt.ts` 中 `Permission.merge(taskAgent.permission, session.permission)` 会在 ask 时合并子 Agent permission 和 session permission，所以子 Agent 自身 allow 的工具在运行时可以生效（取决于具体调用路径）。但其他只读 `session.permission` 的地方可能不生效。
+
+这意味着 Design 子代理的写工具权限必须由子 Agent 自己的 ruleset 显式 allow，父 Agent 无法临时提升。这是安全的设计：子代理的能力边界由子 Agent 定义决定，父代理只能收紧不能放大。
+
 ## 六、加载与恢复机制
 
 Design 状态必须在实例启动时加载。流程应该是：
