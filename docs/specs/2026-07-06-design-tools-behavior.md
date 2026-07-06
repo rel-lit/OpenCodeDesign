@@ -274,33 +274,9 @@ Parameters: {}
 | 工具 | 行为 |
 |---|---|
 | `design_list_buffer_operations` | 返回当前 buffer 中所有内容操作列表 |
-| `design_get_buffer_state` | 返回 buffer 中当前的设计图合并状态，包含待创建/待修改/待删除的内容 |
 | `design_undo_buffer_operation` | 按 operation ID 从 buffer 移除一条内容操作；存在依赖时按 `cascade` 参数处理 |
 
-### 3.1 `design_get_buffer_state`
-
-返回 buffer 中内容操作合并后的设计图状态，便于 GraphAgent 在不提交的情况下预览整体效果。
-
-输出示例：
-
-```
-当前缓冲区共 3 个操作：
-
-Contexts:
-- 战斗系统 (ctx-abc123)
-
-Concepts:
-- 船 (node-xyz789) in 战斗系统
-- 武器 (node-uvw456) in 战斗系统
-
-Relations:
-- 船 --[装备]-- 武器
-
-Prototypes:
-- 装备 (proto-def012)
-```
-
-### 3.2 `design_undo_buffer_operation` 参数
+### 3.1 `design_undo_buffer_operation` 参数
 
 ```ts
 {
@@ -309,7 +285,7 @@ Prototypes:
 }
 ```
 
-### 3.3 `design_undo_buffer_operation` 依赖规则
+### 3.2 `design_undo_buffer_operation` 依赖规则
 
 被撤销操作若被后续操作引用：
 
@@ -441,16 +417,7 @@ type BufferOperationType =
 }
 ```
 
-### 7.2 `design_get_buffer_state`
-
-```ts
-{
-  title: "Buffer state",
-  output: "当前缓冲区共 3 个操作：\n\nContexts:\n- 战斗系统 (ctx-abc123)\n\nConcepts:\n- 船 (node-xyz789) in 战斗系统\n- 武器 (node-uvw456) in 战斗系统\n\nRelations:\n- 船 --[装备]-- 武器\n\nPrototypes:\n- 装备 (proto-def012)"
-}
-```
-
-### 7.3 `design_list_buffer_operations`
+### 7.2 `design_list_buffer_operations`
 
 ```ts
 {
@@ -461,7 +428,7 @@ type BufferOperationType =
 }
 ```
 
-### 7.4 `design_undo_buffer_operation`
+### 7.3 `design_undo_buffer_operation`
 
 ```ts
 // 成功

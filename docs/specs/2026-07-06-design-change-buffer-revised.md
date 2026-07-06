@@ -12,7 +12,7 @@
 - 写操作一律缓冲，不直接落库。
 - 缓冲区维护可操作、可查询、可撤销的操作日志。
 - `GraphDelta` 只是缓冲区派生出的提交视图，不是内部模型。
-- 读工具只针对已持久化图；buffer 状态由专门的 buffer 控制工具查看。
+- 读工具只针对已持久化图；buffer 中待提交的操作直接通过 `design_list_buffer_operations` 查看，不再提供合并后的设计图预览。
 - 终稿 Approve 时原子提交，Abandon 时原子清空。
 - 提交后的修改不可单独回滚，只能通过新的变更反向操作。
 
@@ -67,7 +67,6 @@
 | 工具 | 含义 |
 |---|---|
 | `design_list_buffer_operations` | 查看当前缓冲区中的内容操作列表 |
-| `design_get_buffer_state` | 查看 buffer 操作合并后的设计图状态 |
 | `design_undo_buffer_operation` | 按 operation ID 移除一条内容操作 |
 
 `design_undo_buffer_operation` 参数：
@@ -113,7 +112,8 @@
 | 工具 | 输出 |
 |---|---|
 | `design_list_buffer_operations` | 操作列表 |
-| `design_get_buffer_state` | 合并后的 contexts / concepts / relations / prototypes 预览 |
+
+读工具只针对已持久化图；buffer 中待提交的操作直接通过 `design_list_buffer_operations` 查看，不再提供合并后的设计图预览。
 
 ## 五、审批流程
 
@@ -235,7 +235,6 @@ export interface DesignChangeBuffer {
   readonly getDelta: (sessionID: string) => Effect.Effect<GraphAgentTypes.GraphDelta>
   readonly apply: (sessionID: string) => Effect.Effect<GraphAgentTypes.GraphDelta>
   readonly clear: (sessionID: string) => Effect.Effect<void>
-  readonly getMergedState: (sessionID: string) => Effect.Effect<DesignTypes.GraphState>
 }
 ```
 
@@ -246,7 +245,6 @@ export interface DesignChangeBuffer {
 - `getDelta` 从当前操作列表派生 `GraphDelta`，仅用于展示/提交。
 - `apply` 返回 `GraphDelta` 并清空列表。
 - `clear` 清空列表。
-- `getMergedState` 重放操作到当前图状态生成预览。
 
 ### 7.2 `Design.Service` 新增方法
 
@@ -257,7 +255,6 @@ readonly bufferUndoOperation: (sessionID: string, operationId: string, cascade?:
 readonly bufferGetDelta: (sessionID: string) => Effect.Effect<GraphAgentTypes.GraphDelta>
 readonly bufferApply: (sessionID: string) => Effect.Effect<GraphAgentTypes.GraphDelta>
 readonly bufferClear: (sessionID: string) => Effect.Effect<void>
-readonly bufferGetMergedState: (sessionID: string) => Effect.Effect<DesignTypes.GraphState>
 ```
 
 逐步移除旧的 accumulator 方法。
@@ -282,7 +279,6 @@ readonly bufferGetMergedState: (sessionID: string) => Effect.Effect<DesignTypes.
 ### 8.2 新增 buffer 控制工具
 
 - `design_list_buffer_operations`
-- `design_get_buffer_state`
 - `design_undo_buffer_operation`
 
 ### 8.3 审批工具不变
@@ -307,15 +303,14 @@ readonly bufferGetMergedState: (sessionID: string) => Effect.Effect<DesignTypes.
 
 `packages/opencode/src/agent/agent.ts`：
 
-- GraphAgent 允许：`design_list_buffer_operations`、`design_get_buffer_state`、`design_undo_buffer_operation`。
-- 继续 deny ChatAgent 直接调用 design 图工具及 design 子代理。
+- GraphAgent 允许：`design_list_buffer_operations`、`design_undo_buffer_operation`。ChatAgent 继续被 deny 直接调用 design 图工具及 design 子代理。
 
 ## 十、Prompt 更新
 
 `packages/opencode/src/design/agent/prompt/graph.txt`：
 
 1. 所有写工具都进入 Design Change Buffer，不立即落库。
-2. 读工具只反映已持久化图；buffer 状态用 `design_list_buffer_operations` / `design_get_buffer_state` 查看。
+2. 读工具只反映已持久化图；buffer 中的待提交操作通过 `design_list_buffer_operations` 查看。
 3. refine 阶段：
    - 每次写工具调用向缓冲区添加一个 operation。
    - 可通过 `design_undo_buffer_operation` 精确撤销。
@@ -330,7 +325,6 @@ readonly bufferGetMergedState: (sessionID: string) => Effect.Effect<DesignTypes.
 - `design_define_relation_prototype` 进入缓冲区，不直接落库。
 - `design_withdraw_relation_prototype` 进入缓冲区。
 - `design_list_buffer_operations` 返回正确操作列表。
-- `design_get_buffer_state` 正确合并 buffer 状态。
 - `design_undo_buffer_operation`：
   - 正常撤销。
   - 有依赖时拒绝（`cascade: false`）。
