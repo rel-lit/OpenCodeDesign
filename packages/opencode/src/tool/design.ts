@@ -153,12 +153,22 @@ export const DesignSummarizeDesignTool = Tool.define(
 
 const SearchProjectParameters = Schema.Struct({
   intent: Schema.String.annotate({ description: "What to search for in the project and how it relates to the design" }),
+  graph_summary: Schema.optional(Schema.String).annotate({
+    description: "Optional precomputed design graph summary. If omitted, the design-graph subagent will generate one.",
+  }),
+  focus: Schema.optional(
+    Schema.Struct({
+      contexts: Schema.optional(Schema.Array(Schema.String)).annotate({ description: "Context names or IDs to focus on" }),
+      concepts: Schema.optional(Schema.Array(Schema.String)).annotate({ description: "Concept names or IDs to focus on" }),
+    }),
+  ).annotate({ description: "Optional focus scope for the graph summary" }),
 })
 
 export const DesignSearchProjectTool = Tool.define(
   "design_search_project",
   Effect.gen(function* () {
     const task = yield* Tool.init(yield* TaskTool)
+    const design = yield* Design.Service
     return {
       description: chatToolDescription(
         "Ask the design-search subagent to read the project and compare it with the current design.",
@@ -166,11 +176,19 @@ export const DesignSearchProjectTool = Tool.define(
       parameters: SearchProjectParameters,
       execute: (args: Schema.Schema.Type<typeof SearchProjectParameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
+          const graphSummary = yield* buildGraphSummary({
+            task,
+            design,
+            ctx,
+            graphSummary: args.graph_summary,
+            focus: args.focus,
+          })
+          const prompt = buildSearchAgentPrompt({ graphSummary, retrievalRequirements: args.intent, focus: args.focus })
           const result = yield* task.execute(
             {
               description: "Design project search",
               subagent_type: "design-search",
-              prompt: args.intent,
+              prompt,
             },
             ctx,
           )
@@ -189,12 +207,22 @@ export const DesignSearchProjectTool = Tool.define(
 
 const SearchWebParameters = Schema.Struct({
   query: Schema.String.annotate({ description: "Web search query" }),
+  graph_summary: Schema.optional(Schema.String).annotate({
+    description: "Optional precomputed design graph summary. If omitted, the design-graph subagent will generate one.",
+  }),
+  focus: Schema.optional(
+    Schema.Struct({
+      contexts: Schema.optional(Schema.Array(Schema.String)).annotate({ description: "Context names or IDs to focus on" }),
+      concepts: Schema.optional(Schema.Array(Schema.String)).annotate({ description: "Concept names or IDs to focus on" }),
+    }),
+  ).annotate({ description: "Optional focus scope for the graph summary" }),
 })
 
 export const DesignSearchWebTool = Tool.define(
   "design_search_web",
   Effect.gen(function* () {
     const task = yield* Tool.init(yield* TaskTool)
+    const design = yield* Design.Service
     return {
       description: chatToolDescription(
         "Ask the design-search subagent to search the web for relevant design references.",
@@ -202,11 +230,23 @@ export const DesignSearchWebTool = Tool.define(
       parameters: SearchWebParameters,
       execute: (args: Schema.Schema.Type<typeof SearchWebParameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
+          const graphSummary = yield* buildGraphSummary({
+            task,
+            design,
+            ctx,
+            graphSummary: args.graph_summary,
+            focus: args.focus,
+          })
+          const prompt = buildSearchAgentPrompt({
+            graphSummary,
+            retrievalRequirements: `Search the web for: ${args.query}`,
+            focus: args.focus,
+          })
           const result = yield* task.execute(
             {
               description: "Design web search",
               subagent_type: "design-search",
-              prompt: `Search the web for: ${args.query}`,
+              prompt,
             },
             ctx,
           )
@@ -222,6 +262,59 @@ export const DesignSearchWebTool = Tool.define(
     }
   }),
 )
+
+function buildGraphSummary(input: {
+  task: { execute: (params: { description: string; subagent_type: string; prompt: string }, ctx: Tool.Context) => Effect.Effect<Tool.ExecuteResult> }
+  design: Design.Interface
+  ctx: Tool.Context
+  graphSummary?: string
+  focus?: { readonly contexts?: ReadonlyArray<string>; readonly concepts?: ReadonlyArray<string> }
+}): Effect.Effect<string> {
+  return Effect.gen(function* () {
+    if (input.graphSummary) return input.graphSummary
+
+    const focusParts: string[] = []
+    if (input.focus?.contexts && input.focus.contexts.length > 0) {
+      focusParts.push(`contexts: ${input.focus.contexts.join(", ")}`)
+    }
+    if (input.focus?.concepts && input.focus.concepts.length > 0) {
+      focusParts.push(`concepts: ${input.focus.concepts.join(", ")}`)
+    }
+    const request = focusParts.length > 0 ? `focus on ${focusParts.join("; ")}` : "Summarize the current design."
+
+    const graphPrompt = yield* buildGraphAgentPrompt({
+      design: input.design,
+      mode: "summarize",
+      request,
+      ctx: input.ctx,
+    })
+    const result = yield* input.task.execute(
+      {
+        description: "Design summary for search",
+        subagent_type: "design-graph",
+        prompt: graphPrompt,
+      },
+      input.ctx,
+    )
+    return result.output
+  })
+}
+
+function buildSearchAgentPrompt(input: {
+  graphSummary: string
+  retrievalRequirements: string
+  focus?: { readonly contexts?: ReadonlyArray<string>; readonly concepts?: ReadonlyArray<string> }
+}): string {
+  const focusParts: string[] = []
+  if (input.focus?.contexts && input.focus.contexts.length > 0) {
+    focusParts.push(`contexts: ${input.focus.contexts.join(", ")}`)
+  }
+  if (input.focus?.concepts && input.focus.concepts.length > 0) {
+    focusParts.push(`concepts: ${input.focus.concepts.join(", ")}`)
+  }
+  const focusLine = focusParts.length > 0 ? `\n## Focus\n${focusParts.join("\n")}` : ""
+  return `## Graph Summary\n${input.graphSummary}\n\n## Retrieval Requirements\n${input.retrievalRequirements}${focusLine}`
+}
 
 function buildGraphAgentPrompt(input: {
   design: Design.Interface

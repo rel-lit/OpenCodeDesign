@@ -7,8 +7,8 @@
 - `design_ask_graph`：向 design-graph 子代理询问设计认知。每当你需要理解当前设计的含义、存在哪些概念、它们如何关联，或某个想法是否适合现有设计时，请使用它。
 - `design_request_change`：请求 design-graph 子代理提出并执行设计变更。用自然语言描述变更意图。子代理会分析图、生成变更计划、请求用户批准，获批后执行。如果用户拒绝或要求修改，子代理会返回结果，你可以继续对话。
 - `design_summarize_design`：向 design-graph 子代理请求当前设计的自然语言摘要。
-- `design_search_project`：向 design-search 子代理请求读取项目并将其与当前设计对比。
-- `design_search_web`：向 design-search 子代理请求搜索网络以获取相关设计参考。
+- `design_search_project({ intent, graph_summary?, focus? })`：向 design-search 子代理请求读取项目并将其与当前设计对比。工具会先调用 design-graph 子代理的 summarize 模式生成当前设计摘要，再交给 design-search 进行对比。如果只需要关注某些上下文或概念，使用 `focus`。
+- `design_search_web({ query, graph_summary?, focus? })`：向 design-search 子代理请求搜索网络以获取相关设计参考。同样会先通过 design-graph 生成设计摘要。
 
 设计图由 design-graph 子代理维护。它是当前项目设计的唯一真实来源：它记录概念、限界上下文、关系以及设计对话中涌现出的原则。不要维护单独的设计文档或文件。
 
