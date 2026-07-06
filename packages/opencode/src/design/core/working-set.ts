@@ -15,10 +15,10 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/DesignWorkingSet") {}
 
-export const makeWorkingSet = (capacity = 20) =>
+export const makeWorkingSet = (capacity = 20, initialEntries?: DesignTypes.WorkingSetEntry[]) =>
   Effect.fn("WorkingSet.make")(function* (graph: GraphEngine.Interface) {
     let workingSet: DeepMutable<DesignTypes.WorkingSet> = {
-      entries: [],
+      entries: initialEntries ? [...initialEntries] : [],
       capacity,
     }
 
@@ -42,6 +42,13 @@ export const makeWorkingSet = (capacity = 20) =>
         }
         return nodes.get(id)
       })
+
+    if (initialEntries) {
+      for (const entry of initialEntries) {
+        if (entry.type === "context") yield* loadContext(entry.id)
+        else yield* loadNode(entry.id)
+      }
+    }
 
     const state = Effect.fnUntraced(function* () {
       return workingSet

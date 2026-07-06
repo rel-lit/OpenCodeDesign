@@ -2,6 +2,7 @@ import { Clock, Context, Effect, Layer } from "effect"
 import type { Scope } from "effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { InstanceState } from "@/effect/instance-state"
+import { registerBeforeDisposer } from "@/effect/instance-registry"
 import { GraphEngine } from "./core/graph"
 import { WorkingSet } from "./core/working-set"
 import { EventLog } from "./core/event-log"
@@ -104,9 +105,10 @@ export const layer = (options?: LayerOptions) =>
         const store = designStore.store
 
         const loaded = yield* store.loadGraphState()
+        const workingSetEntries = yield* store.loadWorkingSet()
 
         const graph = yield* GraphEngine.makeEngine()
-        const workingSet = yield* WorkingSet.makeWorkingSet(20)(graph)
+        const workingSet = yield* WorkingSet.makeWorkingSet(20, workingSetEntries)(graph)
         const eventLog = yield* EventLog.makeEventLog()
         const versionSync = VersionSync.make(eventLog)
         const temporaryWorkingSet = TemporaryWorkingSet.make(graph, workingSet)
@@ -159,7 +161,31 @@ export const layer = (options?: LayerOptions) =>
       }),
     )
 
-    const use = <A, E>(select: (state: DesignState) => Effect.Effect<A, E>) =>
+      const saveWorkingSet = Effect.fn("Design.saveWorkingSet")(() =>
+        use((state) =>
+          Effect.gen(function* () {
+            const entries = yield* state.workingSet.list()
+            yield* state.store.saveWorkingSet(entries)
+          }),
+        ),
+      )
+
+      const off = registerBeforeDisposer((directory) =>
+        Effect.runPromise(
+          saveWorkingSet().pipe(
+            Effect.provideService(DesignStore.Service, designStore),
+          ),
+        ),
+      )
+      yield* Effect.addFinalizer(() => Effect.sync(off))
+
+      yield* Effect.addFinalizer(() =>
+        Effect.gen(function* () {
+          yield* saveWorkingSet().pipe(Effect.ignore)
+        }),
+      )
+
+      const use = <A, E>(select: (state: DesignState) => Effect.Effect<A, E>) =>
       Effect.gen(function* () {
         const state = yield* InstanceState.get(designState)
         return yield* select(state)
@@ -668,6 +694,7 @@ export const layer = (options?: LayerOptions) =>
                         name: payload.name,
                         semantics: payload.semantics,
                       })
+                      yield* state.workingSet.touchContext(created.id)
                       events.push(
                         yield* state.eventLog.append({
                           eventType: "context_created",
@@ -682,6 +709,7 @@ export const layer = (options?: LayerOptions) =>
                         patch: { name?: string; semantics?: string }
                       }
                       yield* state.graph.updateContext(payload.id, payload.patch)
+                      yield* state.workingSet.touchContext(payload.id)
                       events.push(
                         yield* state.eventLog.append({
                           eventType: "context_updated",
@@ -693,6 +721,7 @@ export const layer = (options?: LayerOptions) =>
                     case "delete_context": {
                       const payload = op.payload as { id: string }
                       yield* state.graph.deleteContext(payload.id)
+                      yield* state.workingSet.forgetContext(payload.id)
                       events.push(
                         yield* state.eventLog.append({
                           eventType: "context_deleted",
@@ -770,6 +799,7 @@ export const layer = (options?: LayerOptions) =>
                         updatedAt: payload.updatedAt ?? now,
                         retired: payload.retired,
                       })
+                      yield* state.workingSet.touchNode(created.id)
                       events.push(
                         yield* state.eventLog.append({
                           eventType: "node_created",
@@ -784,6 +814,7 @@ export const layer = (options?: LayerOptions) =>
                         patch: Partial<GraphAgentTypes.NodeInput>
                       }
                       yield* state.graph.updateNode(payload.id, payload.patch)
+                      yield* state.workingSet.touchNode(payload.id)
                       events.push(
                         yield* state.eventLog.append({
                           eventType: "node_updated",
@@ -795,6 +826,7 @@ export const layer = (options?: LayerOptions) =>
                     case "delete_node": {
                       const payload = op.payload as { id: string }
                       yield* state.graph.deleteNode(payload.id)
+                      yield* state.workingSet.forgetNode(payload.id)
                       events.push(
                         yield* state.eventLog.append({
                           eventType: "node_deleted",
@@ -813,6 +845,8 @@ export const layer = (options?: LayerOptions) =>
                         createdAt: payload.createdAt ?? now,
                         updatedAt: payload.updatedAt ?? now,
                       })
+                      yield* state.workingSet.touchNode(payload.leftNodeId)
+                      yield* state.workingSet.touchNode(payload.rightNodeId)
                       events.push(
                         yield* state.eventLog.append({
                           eventType: "edge_created",
@@ -831,6 +865,8 @@ export const layer = (options?: LayerOptions) =>
                         patch: Partial<GraphAgentTypes.EdgeInput>
                       }
                       yield* state.graph.updateEdge(payload.leftNodeId, payload.rightNodeId, payload.patch)
+                      yield* state.workingSet.touchNode(payload.leftNodeId)
+                      yield* state.workingSet.touchNode(payload.rightNodeId)
                       events.push(
                         yield* state.eventLog.append({
                           eventType: "edge_updated",
@@ -845,6 +881,8 @@ export const layer = (options?: LayerOptions) =>
                     case "delete_edge": {
                       const payload = op.payload as { leftNodeId: string; rightNodeId: string }
                       yield* state.graph.deleteEdge(payload.leftNodeId, payload.rightNodeId)
+                      yield* state.workingSet.touchNode(payload.leftNodeId)
+                      yield* state.workingSet.touchNode(payload.rightNodeId)
                       events.push(
                         yield* state.eventLog.append({
                           eventType: "edge_deleted",

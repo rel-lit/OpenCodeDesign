@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Fiber, Layer, Queue } from "effect"
+import { Effect, Fiber, Layer, Queue, Context } from "effect"
 import { testEffect } from "../lib/effect"
 import { Design } from "../../src/design/design"
 import { GraphAgentDesignTools } from "../../src/tool/design"
@@ -9,7 +9,8 @@ import { Tool } from "@/tool/tool"
 import { Agent } from "../../src/agent/agent"
 import { Truncate } from "@/tool/truncate"
 import { MessageID, SessionID } from "../../src/session/schema"
-import { testInstanceStoreLayer } from "../fixture/fixture"
+import { testInstanceStoreLayer, provideInstanceEffect, TestInstance } from "../fixture/fixture"
+import { InstanceStore } from "../../src/project/instance-store"
 import { Question } from "../../src/question"
 import { EventV2Bridge } from "../../src/event-v2-bridge"
 import { GraphAgent } from "../../src/design/agent/types"
@@ -522,6 +523,46 @@ describe("GraphAgent internal design tools", () => {
 
       yield* question.reply({ requestID: item.id, answers: [["Abandon"]] })
       yield* Fiber.join(fiber)
+    }).pipe(Effect.provide(provideDesign)),
+  )
+
+  it.instance("active working set persists across instance disposal", () =>
+    Effect.gen(function* () {
+      const testInstance = yield* TestInstance
+      const directory = testInstance.directory
+
+      const designLayer = Design.layer().pipe(Layer.provide(DesignStore.defaultLayer))
+      const designLayerLive = Layer.merge(designLayer, Layer.succeed(Agent.Service, yield* Agent.Service))
+
+      const first = yield* provideInstanceEffect(directory)(
+        Effect.gen(function* () {
+          const design = yield* Design.Service
+          const ctxTool = yield* GraphAgentDesignTools.DesignDefineContextTool
+          const nodeTool = yield* GraphAgentDesignTools.DesignDefineConceptTool
+          const ctx = makeCtx()
+
+          const c = yield* (yield* Tool.init(ctxTool)).execute({ name: "系统" }, ctx)
+          const contextId = c.metadata.contextId as string
+          yield* (yield* Tool.init(nodeTool)).execute({ name: "船", context: contextId }, ctx)
+          yield* design.bufferApply(ctx.sessionID)
+
+          const ws = yield* design.listWorkingSet()
+          expect(ws.some((e) => e.name === "船" && e.type === "node")).toBe(true)
+          return ws
+        }).pipe(Effect.provide(designLayerLive)),
+      )
+
+      yield* InstanceStore.Service.use((store) => store.disposeDirectory(directory))
+
+      const restored = yield* provideInstanceEffect(directory)(
+        Effect.gen(function* () {
+          const design = yield* Design.Service
+          return yield* design.listWorkingSet()
+        }).pipe(Effect.provide(designLayerLive)),
+      )
+
+      expect(restored.some((e) => e.name === "船" && e.type === "node")).toBe(true)
+      expect(restored.some((e) => e.name === "系统" && e.type === "context")).toBe(true)
     }).pipe(Effect.provide(provideDesign)),
   )
 })

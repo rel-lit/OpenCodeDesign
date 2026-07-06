@@ -11,6 +11,8 @@ export interface Store {
   readonly ensureSchema: () => Effect.Effect<void>
   readonly loadGraphState: () => Effect.Effect<DesignTypes.GraphState>
   readonly saveGraphState: (state: Omit<DesignTypes.GraphState, "eventLog" | "workingSet">) => Effect.Effect<void>
+  readonly loadWorkingSet: () => Effect.Effect<DesignTypes.WorkingSetEntry[]>
+  readonly saveWorkingSet: (entries: DesignTypes.WorkingSetEntry[]) => Effect.Effect<void>
   readonly appendEvent: (event: DesignTypes.EventNode) => Effect.Effect<void>
   readonly listEvents: () => Effect.Effect<DesignTypes.EventNode[]>
   readonly transaction: <A, E, R>(f: (store: Store) => Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
@@ -89,6 +91,16 @@ const makeStore = (db: DbLike): Store => {
       )
     `)
 
+    yield* run(`
+      CREATE TABLE IF NOT EXISTS design_working_set (
+        entry_id TEXT PRIMARY KEY,
+        entry_type TEXT NOT NULL,
+        name TEXT NOT NULL,
+        brief_semantics TEXT NOT NULL DEFAULT '',
+        position INTEGER NOT NULL
+      )
+    `)
+
     const columns = (yield* all(sql`PRAGMA table_info(design_events)`)) as Array<{ name: string }>
     if (!columns.some((c) => c.name === "source")) {
       yield* run(sql`ALTER TABLE design_events ADD COLUMN source TEXT`)
@@ -156,6 +168,27 @@ const makeStore = (db: DbLike): Store => {
     }
   })
 
+  const loadWorkingSet = Effect.fn("DesignStore.loadWorkingSet")(function* () {
+    const rows = (yield* all("SELECT * FROM design_working_set ORDER BY position ASC")) as WorkingSetRow[]
+    return rows.map((row) => ({
+      id: row.entry_id,
+      name: row.name,
+      type: row.entry_type as "context" | "node",
+      briefSemantics: row.brief_semantics,
+    }))
+  })
+
+  const saveWorkingSet = Effect.fn("DesignStore.saveWorkingSet")(function* (entries) {
+    yield* run(sql`DELETE FROM design_working_set`)
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i]!
+      yield* run(sql`
+        INSERT INTO design_working_set (entry_id, entry_type, name, brief_semantics, position)
+        VALUES (${entry.id}, ${entry.type}, ${entry.name}, ${entry.briefSemantics}, ${i})
+      `)
+    }
+  })
+
   const appendEvent = Effect.fn("DesignStore.appendEvent")(function* (event) {
     yield* run(sql`
       INSERT INTO design_events (
@@ -182,6 +215,8 @@ const makeStore = (db: DbLike): Store => {
     ensureSchema,
     loadGraphState,
     saveGraphState,
+    loadWorkingSet,
+    saveWorkingSet,
     appendEvent,
     listEvents,
     transaction,
@@ -193,6 +228,14 @@ interface ContextRow {
   readonly name: string
   readonly semantics: string
   readonly node_ids: string
+}
+
+interface WorkingSetRow {
+  readonly entry_id: string
+  readonly entry_type: string
+  readonly name: string
+  readonly brief_semantics: string
+  readonly position: number
 }
 
 interface NodeRow {
@@ -323,6 +366,14 @@ export const layer = Layer.effect(
         saveGraphState: (stateArg) => Effect.gen(function* () {
           const s = yield* InstanceState.get(state)
           return yield* s.saveGraphState(stateArg)
+        }),
+        loadWorkingSet: () => Effect.gen(function* () {
+          const s = yield* InstanceState.get(state)
+          return yield* s.loadWorkingSet()
+        }),
+        saveWorkingSet: (entries) => Effect.gen(function* () {
+          const s = yield* InstanceState.get(state)
+          return yield* s.saveWorkingSet(entries)
         }),
         appendEvent: (event) => Effect.gen(function* () {
           const s = yield* InstanceState.get(state)
