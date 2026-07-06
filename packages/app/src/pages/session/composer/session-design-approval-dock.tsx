@@ -225,12 +225,6 @@ export const SessionDesignApprovalDock: Component<{ request: QuestionRequest; on
     reply([[label]])
   }
 
-  const dismiss = () => {
-    if (sending()) return
-    const label = stage() === "final" ? "Abandon" : "Reject"
-    reply([[label]])
-  }
-
   const title = createMemo(() => {
     if (stage() === "final") return language.t("session.designApproval.finalizeTitle")
     return language.t("session.designApproval.title")
@@ -244,13 +238,14 @@ export const SessionDesignApprovalDock: Component<{ request: QuestionRequest; on
       ref={(el) => (root = el)}
       header={<div data-slot="question-header-title">{title()}</div>}
       footer={
-        <div data-slot="question-footer">
+        <>
+          <div data-slot="question-footer-spacer" />
           <div data-slot="question-footer-actions">
             <Button variant="primary" size="large" disabled={sending()} onClick={submit}>
               {language.t("common.submit")}
             </Button>
           </div>
-        </div>
+        </>
       }
     >
       <div data-slot="question-text" data-design-approval="true" class="overflow-auto">

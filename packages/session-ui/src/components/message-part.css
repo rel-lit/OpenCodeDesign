@@ -1119,6 +1119,10 @@
     margin-top: -24px;
   }
 
+  [data-slot="question-footer-spacer"] {
+    flex: 1;
+  }
+
   [data-slot="question-footer-actions"] {
     display: flex;
     align-items: center;
