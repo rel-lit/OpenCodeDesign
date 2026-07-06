@@ -2,6 +2,7 @@ import { Clock, Context, Effect, Layer } from "effect"
 import type { Scope } from "effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { InstanceState } from "@/effect/instance-state"
+import { InstanceRef } from "@/effect/instance-ref"
 import { registerBeforeDisposer } from "@/effect/instance-registry"
 import { GraphEngine } from "./core/graph"
 import { WorkingSet } from "./core/working-set"
@@ -161,29 +162,37 @@ export const layer = (options?: LayerOptions) =>
       }),
     )
 
-      const saveWorkingSet = Effect.fn("Design.saveWorkingSet")(() =>
-        use((state) =>
-          Effect.gen(function* () {
-            const entries = yield* state.workingSet.list()
-            yield* state.store.saveWorkingSet(entries)
-          }),
-        ),
-      )
-
-      const off = registerBeforeDisposer((directory) =>
-        Effect.runPromise(
-          saveWorkingSet().pipe(
-            Effect.provideService(DesignStore.Service, designStore),
-          ),
-        ),
-      )
-      yield* Effect.addFinalizer(() => Effect.sync(off))
-
-      yield* Effect.addFinalizer(() =>
+    const saveWorkingSet = Effect.fn("Design.saveWorkingSet")(() =>
+      use((state) =>
         Effect.gen(function* () {
-          yield* saveWorkingSet().pipe(Effect.ignore)
+          const entries = yield* state.workingSet.list()
+          yield* state.store.saveWorkingSet(entries)
         }),
-      )
+      ),
+    )
+
+    const saveWorkingSetIfPossible = Effect.fn("Design.saveWorkingSetIfPossible")(() =>
+      Effect.gen(function* () {
+        const ctx = yield* InstanceRef
+        if (!ctx) return
+        yield* saveWorkingSet()
+      }),
+    )
+
+    const off = registerBeforeDisposer((directory) =>
+      Effect.runPromise(
+        saveWorkingSetIfPossible().pipe(
+          Effect.provideService(DesignStore.Service, designStore),
+        ),
+      ),
+    )
+    yield* Effect.addFinalizer(() => Effect.sync(off))
+
+    yield* Effect.addFinalizer(() =>
+      Effect.gen(function* () {
+        yield* saveWorkingSetIfPossible().pipe(Effect.ignore)
+      }),
+    )
 
       const use = <A, E>(select: (state: DesignState) => Effect.Effect<A, E>) =>
       Effect.gen(function* () {
