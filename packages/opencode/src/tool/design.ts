@@ -1417,7 +1417,7 @@ export const DesignRequestApprovalTool = Tool.define<
 
 function validatePendingOperations(
   state: DesignTypes.GraphState,
-  operations: DesignChangeBuffer.BufferOperation[],
+  operations: GraphAgentTypes.BufferOperation[],
 ): string[] {
   const errors: string[] = []
 

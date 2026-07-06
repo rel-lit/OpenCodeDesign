@@ -4,35 +4,14 @@ import { DesignTypes } from "../core/types"
 import * as GraphAgentTypes from "../agent/types"
 import { GraphEngine } from "../core/graph"
 
-export type BufferOperationType =
-  | "create_context"
-  | "update_context"
-  | "delete_context"
-  | "create_node"
-  | "update_node"
-  | "delete_node"
-  | "create_edge"
-  | "update_edge"
-  | "delete_edge"
-  | "create_prototype"
-  | "update_prototype"
-  | "delete_prototype"
-
-export interface BufferOperation {
-  id: string
-  type: BufferOperationType
-  description: string
-  payload: unknown
-}
-
 export class BufferError {
   readonly _tag = "BufferError"
   constructor(readonly message: string, readonly blockedBy?: string[]) {}
 }
 
 export interface Interface {
-  readonly listOperations: (sessionID: string) => Effect.Effect<BufferOperation[]>
-  readonly addOperation: (sessionID: string, operation: Omit<BufferOperation, "id">) => Effect.Effect<BufferOperation>
+  readonly listOperations: (sessionID: string) => Effect.Effect<GraphAgentTypes.BufferOperation[]>
+  readonly addOperation: (sessionID: string, operation: Omit<GraphAgentTypes.BufferOperation, "id">) => Effect.Effect<GraphAgentTypes.BufferOperation>
   readonly undoOperation: (
     sessionID: string,
     operationId: string,
@@ -45,16 +24,16 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/DesignChangeBuffer") {}
 
-const ensureSession = (store: Map<string, BufferOperation[]>, sessionID: string) => {
+const ensureSession = (store: Map<string, GraphAgentTypes.BufferOperation[]>, sessionID: string) => {
   if (!store.has(sessionID)) store.set(sessionID, [])
 }
 
-const operationPayloadId = (op: BufferOperation): string | undefined => {
+const operationPayloadId = (op: GraphAgentTypes.BufferOperation): string | undefined => {
   const payload = op.payload as { id?: string }
   return payload.id
 }
 
-const isReferencedBy = (op: BufferOperation, candidate: BufferOperation): boolean => {
+const isReferencedBy = (op: GraphAgentTypes.BufferOperation, candidate: GraphAgentTypes.BufferOperation): boolean => {
   const opId = operationPayloadId(op)
   if (!opId) return false
 
@@ -84,7 +63,7 @@ const isReferencedBy = (op: BufferOperation, candidate: BufferOperation): boolea
   }
 }
 
-const collectDependentOperations = (operations: BufferOperation[], targetIndex: number): number[] => {
+const collectDependentOperations = (operations: GraphAgentTypes.BufferOperation[], targetIndex: number): number[] => {
   const dependent = new Set<number>()
   const queue = [targetIndex]
 
@@ -108,18 +87,18 @@ const collectDependentOperations = (operations: BufferOperation[], targetIndex: 
 }
 
 export const make = (_graph: GraphEngine.Interface) => {
-  const store = new Map<string, BufferOperation[]>()
+  const store = new Map<string, GraphAgentTypes.BufferOperation[]>()
 
   const listOperations = Effect.fn("DesignChangeBuffer.listOperations")(function* (sessionID: string) {
     return store.get(sessionID) ?? []
   })
 
   const addOperation = Effect.fn("DesignChangeBuffer.addOperation")(
-    function* (sessionID: string, operation: Omit<BufferOperation, "id">) {
+    function* (sessionID: string, operation: Omit<GraphAgentTypes.BufferOperation, "id">) {
       ensureSession(store, sessionID)
       const operations = store.get(sessionID)!
       const id = crypto.randomUUID()
-      const bufferOperation: BufferOperation = { ...operation, id }
+      const bufferOperation: GraphAgentTypes.BufferOperation = { ...operation, id }
       operations.push(bufferOperation)
       return bufferOperation
     },

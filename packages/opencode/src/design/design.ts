@@ -644,7 +644,7 @@ export const layer = (options?: LayerOptions) =>
         use((state) => state.temporaryWorkingSet.expandNode(sessionID, nodeId)),
       resetTemporaryWorkingSet: (sessionID: string) => use((state) => state.temporaryWorkingSet.reset(sessionID)),
       destroyTemporaryWorkingSet: (sessionID: string) => use((state) => state.temporaryWorkingSet.destroy(sessionID)),
-      bufferAddOperation: (sessionID: string, operation: Omit<DesignChangeBuffer.BufferOperation, "id">) =>
+      bufferAddOperation: (sessionID: string, operation: Omit<GraphAgentTypes.BufferOperation, "id">) =>
         use((state) => state.changeBuffer.addOperation(sessionID, operation)),
       bufferListOperations: (sessionID: string) => use((state) => state.changeBuffer.listOperations(sessionID)),
       bufferUndoOperation: (sessionID: string, operationId: string, cascade?: boolean) =>

@@ -414,6 +414,8 @@ describe("GraphAgent internal design tools", () => {
         affectedNodes: ["节点 A"],
         affectedEdges: [],
         affectedContexts: ["上下文 A"],
+        affectedPrototypes: [],
+        operations: [],
         summary: "在 Force 模式下过滤了矛盾边后应用",
       },
     }

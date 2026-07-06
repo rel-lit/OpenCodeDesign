@@ -7,6 +7,27 @@ export interface WorkingSetEntry {
   briefSemantics: string
 }
 
+export type BufferOperationType =
+  | "create_context"
+  | "update_context"
+  | "delete_context"
+  | "create_node"
+  | "update_node"
+  | "delete_node"
+  | "create_edge"
+  | "update_edge"
+  | "delete_edge"
+  | "create_prototype"
+  | "update_prototype"
+  | "delete_prototype"
+
+export interface BufferOperation {
+  id: string
+  type: BufferOperationType
+  description: string
+  payload: unknown
+}
+
 export interface GraphDelta {
   addNodes?: NodeInput[]
   updateNodes?: Array<{ id: string; patch: Partial<NodeInput> }>
@@ -115,6 +136,8 @@ export interface Output {
     affectedNodes: string[]
     affectedEdges: string[]
     affectedContexts: string[]
+    affectedPrototypes: string[]
+    operations: BufferOperation[]
     summary: string
   }
   questions?: string[]
