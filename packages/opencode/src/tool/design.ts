@@ -1877,13 +1877,13 @@ function formatPendingDelta(
   })
 }
 
-export const ChatAgentDesignTools = [
+export const ChatAgentDesignTools = {
   DesignAskGraphTool,
   DesignRequestChangeTool,
   DesignSummarizeDesignTool,
   DesignSearchProjectTool,
   DesignSearchWebTool,
-]
+}
 
 export const GraphAgentDesignTools = {
   DesignGetTemporaryWorkingSetTool,
