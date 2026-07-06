@@ -703,6 +703,179 @@ export const DesignGetConceptTool = Tool.define<
   }),
 )
 
+const GetRelationParameters = Schema.Struct({
+  left: Schema.String.annotate({ description: "Left concept name or ID (unordered endpoint)" }),
+  right: Schema.String.annotate({ description: "Right concept name or ID (unordered endpoint)" }),
+})
+
+export const DesignGetRelationTool = Tool.define<
+  typeof GetRelationParameters,
+  Record<string, unknown>,
+  Design.Service
+>(
+  "design_get_relation",
+  Effect.gen(function* () {
+    const design = yield* Design.Service
+    return {
+      description: designToolDescription("Get the full content of the relation between two concepts."),
+      parameters: GetRelationParameters,
+      execute: (args, ctx) =>
+        Effect.gen(function* () {
+          const state = yield* design.getState()
+          const leftNode = state.nodes.find(
+            (n) => n.id === args.left || n.name === args.left || n.aliases.includes(args.left),
+          )
+          if (!leftNode) {
+            return { title: "Left concept not found", output: `No concept matching "${args.left}"`, metadata: {} }
+          }
+          const rightNode = state.nodes.find(
+            (n) => n.id === args.right || n.name === args.right || n.aliases.includes(args.right),
+          )
+          if (!rightNode) {
+            return { title: "Right concept not found", output: `No concept matching "${args.right}"`, metadata: {} }
+          }
+          const edge = state.edges.find(
+            (e) =>
+              (e.leftNodeId === leftNode.id && e.rightNodeId === rightNode.id) ||
+              (e.leftNodeId === rightNode.id && e.rightNodeId === leftNode.id),
+          )
+          if (!edge) {
+            return {
+              title: "Relation not found",
+              output: `No relation between "${leftNode.name}" and "${rightNode.name}"`,
+              metadata: {},
+            }
+          }
+          const prototype = state.prototypes.find((p) => p.id === edge.prototypeId)
+          const parameterLines = Object.entries(edge.parameters ?? {}).filter(([k]) => k !== "semantics").length
+            ? ["Parameters:", ...Object.entries(edge.parameters!).filter(([k]) => k !== "semantics").map(([k, v]) => `  ${k}: ${JSON.stringify(v)}`)]
+            : ["Parameters: none"]
+          const lines = [
+            `Relation: ${leftNode.name} --[${prototype?.name ?? edge.prototypeId}]-- ${rightNode.name}`,
+            `Left: ${leftNode.name} (${leftNode.id})`,
+            `Right: ${rightNode.name} (${rightNode.id})`,
+            `Prototype: ${prototype?.name ?? edge.prototypeId} (${edge.prototypeId})`,
+            `Semantics: ${(edge.parameters?.semantics as string | undefined) ?? prototype?.defaultSemantics ?? "none"}`,
+            ...parameterLines,
+          ]
+          return {
+            title: `Relation ${leftNode.name} -- ${rightNode.name}`,
+            output: lines.join("\n"),
+            metadata: { edge, leftNode, rightNode, prototype },
+          }
+        }).pipe(Effect.orDie),
+    }
+  }),
+)
+
+const GetPrototypeParameters = Schema.Struct({
+  name_or_id: Schema.String.annotate({ description: "Prototype name or ID" }),
+})
+
+export const DesignGetPrototypeTool = Tool.define<
+  typeof GetPrototypeParameters,
+  Record<string, unknown>,
+  Design.Service
+>(
+  "design_get_prototype",
+  Effect.gen(function* () {
+    const design = yield* Design.Service
+    return {
+      description: designToolDescription("Get the full content of a relation prototype."),
+      parameters: GetPrototypeParameters,
+      execute: (args, ctx) =>
+        Effect.gen(function* () {
+          const state = yield* design.getState()
+          const prototype = state.prototypes.find(
+            (p) => p.id === args.name_or_id || p.name === args.name_or_id,
+          )
+          if (!prototype) {
+            return { title: "Prototype not found", output: `No prototype matching "${args.name_or_id}"`, metadata: {} }
+          }
+          const schemaLines = Object.entries(prototype.parameterSchema ?? {}).length
+            ? ["Parameter schema:", ...Object.entries(prototype.parameterSchema).map(([k, v]) => `  ${k}: ${JSON.stringify(v)}`)]
+            : ["Parameter schema: none"]
+          const lines = [
+            `Prototype: ${prototype.name} (${prototype.id})`,
+            `Default semantics: ${prototype.defaultSemantics || "none"}`,
+            ...schemaLines,
+          ]
+          return {
+            title: `Prototype ${prototype.name}`,
+            output: lines.join("\n"),
+            metadata: { prototype },
+          }
+        }).pipe(Effect.orDie),
+    }
+  }),
+)
+
+const ExpandNodeFocusedParameters = Schema.Struct({
+  name_or_id: Schema.String.annotate({ description: "Concept name or ID to expand with full details" }),
+})
+
+export const DesignExpandNodeFocusedTool = Tool.define<
+  typeof ExpandNodeFocusedParameters,
+  Record<string, unknown>,
+  Design.Service
+>(
+  "design_expand_node_focused",
+  Effect.gen(function* () {
+    const design = yield* Design.Service
+    return {
+      description: designToolDescription("Expand a concept and return full details of the center, neighbors, and relations."),
+      parameters: ExpandNodeFocusedParameters,
+      execute: (args, ctx) =>
+        Effect.gen(function* () {
+          const state = yield* design.getState()
+          const node = state.nodes.find(
+            (n) => n.id === args.name_or_id || n.name === args.name_or_id || n.aliases.includes(args.name_or_id),
+          )
+          if (!node) {
+            return { title: "Concept not found", output: `No concept matching "${args.name_or_id}"`, metadata: {} }
+          }
+          const context = state.contexts.find((c) => c.id === node.contextId)
+          const edges = state.edges.filter((e) => e.leftNodeId === node.id || e.rightNodeId === node.id)
+          const lines: string[] = [
+            `Center: ${node.name} (${node.id})`,
+            `Context: ${context?.name ?? node.contextId}`,
+            `Kind: ${node.kind}`,
+            `Aliases: ${node.aliases.join(", ") || "none"}`,
+            `Semantics: ${node.defaultSemantics || "none"}`,
+            "",
+            "Neighbors:",
+          ]
+          for (const edge of edges) {
+            const otherId = edge.leftNodeId === node.id ? edge.rightNodeId : edge.leftNodeId
+            const other = state.nodes.find((n) => n.id === otherId)
+            const prototype = state.prototypes.find((p) => p.id === edge.prototypeId)
+            if (!other || !prototype) continue
+            const otherContext = state.contexts.find((c) => c.id === other.contextId)
+            lines.push("")
+            lines.push(`Concept: ${other.name} (${other.id})`)
+            lines.push(`Context: ${otherContext?.name ?? other.contextId}`)
+            lines.push(`Kind: ${other.kind}`)
+            lines.push(`Aliases: ${other.aliases.join(", ") || "none"}`)
+            lines.push(`Semantics: ${other.defaultSemantics || "none"}`)
+            lines.push("")
+            lines.push(`Relation: ${node.name} --[${prototype.name}]-- ${other.name}`)
+            lines.push(`Prototype: ${prototype.name} (${prototype.id})`)
+            lines.push(`Semantics: ${(edge.parameters?.semantics as string | undefined) ?? prototype.defaultSemantics ?? "none"}`)
+            for (const [k, v] of Object.entries(edge.parameters ?? {})) {
+              if (k === "semantics") continue
+              lines.push(`  ${k}: ${JSON.stringify(v)}`)
+            }
+          }
+          return {
+            title: `Focused expansion of ${node.name}`,
+            output: lines.join("\n"),
+            metadata: { nodeId: node.id, neighborCount: edges.length },
+          }
+        }).pipe(Effect.orDie),
+    }
+  }),
+)
+
 const ListPrototypesParameters = Schema.Struct({})
 
 export const DesignListPrototypesTool = Tool.define<
@@ -834,6 +1007,15 @@ export const DesignWithdrawContextTool = Tool.define<
           if (!context) {
             return { title: "Context not found", output: `No context matching "${args.name_or_id}"`, metadata: {} }
           }
+          const childNodes = state.nodes.filter((n) => n.contextId === context.id)
+          if (childNodes.length > 0) {
+            const names = childNodes.map((n) => n.name).join(", ")
+            return {
+              title: "Context still contains concepts",
+              output: `Context "${context.name}" still contains concepts: ${names}. Withdraw them first.`,
+              metadata: { childNodeIds: childNodes.map((n) => n.id) },
+            }
+          }
           const op = yield* design.bufferAddOperation(ctx.sessionID, {
             type: "delete_context",
             description: `Delete context ${context.name}`,
@@ -870,9 +1052,34 @@ export const DesignDefineConceptTool = Tool.define<
       parameters: DefineConceptParameters,
       execute: (args, ctx) =>
         Effect.gen(function* () {
+          const state = yield* design.getState()
           const context = yield* findContextByNameOrIdWithBuffer(design, ctx.sessionID, args.context)
           if (!context) {
             return { title: "Context not found", output: `No context matching "${args.context}"`, metadata: {} }
+          }
+          const operations = yield* design.bufferListOperations(ctx.sessionID)
+          const pendingCreateNode = operations.find(
+            (o) =>
+              o.type === "create_node" &&
+              (o.payload as { name: string; contextId: string }).name === args.name &&
+              (o.payload as { name: string; contextId: string }).contextId === context.id,
+          )
+          if (pendingCreateNode) {
+            return {
+              title: "Concept already exists",
+              output: `Concept '${args.name}' already exists in context '${context.name}'`,
+              metadata: {},
+            }
+          }
+          const existingNode = state.nodes.find(
+            (n) => n.contextId === context.id && (n.name === args.name || n.aliases.includes(args.name)),
+          )
+          if (existingNode) {
+            return {
+              title: "Concept already exists",
+              output: `Concept '${args.name}' already exists in context '${context.name}'`,
+              metadata: {},
+            }
           }
           const id = crypto.randomUUID()
           const op = yield* design.bufferAddOperation(ctx.sessionID, {
@@ -1135,6 +1342,15 @@ export const DesignWithdrawRelationTool = Tool.define<
           )
           if (!rightNode) {
             return { title: "Right concept not found", output: `No concept matching "${args.right}"`, metadata: {} }
+          }
+          const edgeKey = DesignTypes.edgeKey(leftNode.id, rightNode.id)
+          const exists = state.edges.some((e) => DesignTypes.edgeKey(e.leftNodeId, e.rightNodeId) === edgeKey)
+          if (!exists) {
+            return {
+              title: "Relation not found",
+              output: `Edge ${leftNode.name}<->${rightNode.name} does not exist`,
+              metadata: {},
+            }
           }
           const op = yield* design.bufferAddOperation(ctx.sessionID, {
             type: "delete_edge",
@@ -1892,6 +2108,9 @@ export const GraphAgentDesignTools = {
   DesignGetStateSummaryTool,
   DesignGetContextTool,
   DesignGetConceptTool,
+  DesignGetRelationTool,
+  DesignGetPrototypeTool,
+  DesignExpandNodeFocusedTool,
   DesignListPrototypesTool,
   DesignDefineContextTool,
   DesignUpdateContextTool,

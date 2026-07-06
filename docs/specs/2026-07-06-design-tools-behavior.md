@@ -94,25 +94,25 @@ Relations:
 
 ```ts
 {
-  from: string  // 源 concept 名称或 ID
-  to: string    // 目标 concept 名称或 ID
+  left: string  // 端点 concept 名称或 ID（无序）
+  right: string // 端点 concept 名称或 ID（无序）
 }
 ```
 
 行为：
-- 查找 from 和 to 两个 concept。
+- 查找 left 和 right 两个 concept。
 - 查找它们之间的关系（边）。
 - 如果关系存在，返回完整内容。
 - 如果关系不存在，返回错误 "No relation between 'X' and 'Y'"
 
-注意：关系本身没有独立 ID，只能通过 `from` 和 `to` 两个 concept 的 ID 唯一标识。底层 edge 为无向，输出格式由工具自动处理为 `A --[prototype]-- B`，不暴露方向给 GraphAgent。
+注意：关系本身没有独立 ID，只能通过 `left` 和 `right` 两个 concept 的 ID 唯一标识。底层 edge 为无向，输出格式由工具自动处理为 `A --[prototype]-- B`，不暴露方向给 GraphAgent。
 
 输出示例：
 
 ```
 Relation: 船 --[装备]-- 武器
-From: 船 (node-xyz789)
-To: 武器 (node-uvw456)
+Left: 船 (node-xyz789)
+Right: 武器 (node-uvw456)
 Prototype: 装备 (proto-def012)
 Semantics: 船可以装备武器作为攻击性组件
 Parameters:
@@ -121,8 +121,8 @@ Parameters:
 ```
 
 异常：
-- from 不存在：错误 "Source concept 'X' not found"
-- to 不存在：错误 "Target concept 'Y' not found"
+- left 不存在：错误 "Source concept 'X' not found"
+- right 不存在：错误 "Target concept 'Y' not found"
 - 关系不存在：错误 "No relation between 'X' and 'Y'"
 
 #### `design_get_prototype`
@@ -177,8 +177,8 @@ Aliases: none
 Semantics: 可装备的攻击性物品。
 
 Relation: 船 --[装备]-- 武器
-From: 船 (node-xyz789)
-To: 武器 (node-uvw456)
+Left: 船 (node-xyz789)
+Right: 武器 (node-uvw456)
 Prototype: 装备 (proto-def012)
 Semantics: 船可以装备武器作为攻击性组件
 Parameters:
@@ -193,8 +193,8 @@ Aliases: none
 Semantics: 游戏核心战斗机制。
 
 Relation: 船 --[属于]-- 战斗系统
-From: 船 (node-xyz789)
-To: 战斗系统 (ctx-abc123)
+Left: 船 (node-xyz789)
+Right: 战斗系统 (ctx-abc123)
 Prototype: 属于 (proto-ghi789)
 Semantics: 概念属于某个限界上下文
 Parameters: {}
@@ -227,8 +227,8 @@ Parameters: {}
 | `design_define_concept` | `create_node` | 添加创建 concept 操作 | 同一 context 下名字已存在时报错；所属 context 不存在报错 |
 | `design_refine_concept` | `update_node` | 添加更新 concept 操作 | 目标不存在报错 |
 | `design_withdraw_concept` | `delete_node` | 添加删除 concept 操作，并自动级联删除相关 edge | 目标不存在报错；强制自动级联，不允许 dangling edge |
-| `design_relate_concepts` | `create_edge` 或 `update_edge` | 添加创建/更新 edge 操作；返回结果通过 `metadata.operationType` 区分 | from/to/prototype 不存在报错 |
-| `design_withdraw_relation` | `delete_edge` | 添加删除 edge 操作 | from/to 不存在报错；边不存在时返回警告 |
+| `design_relate_concepts` | `create_edge` 或 `update_edge` | 添加创建/更新 edge 操作；返回结果通过 `metadata.operationType` 区分 | left/right/prototype 不存在报错 |
+| `design_withdraw_relation` | `delete_edge` | 添加删除 edge 操作 | left/right 不存在报错；边不存在时返回警告 |
 | `design_define_relation_prototype` | `create_prototype` 或 `update_prototype` | 添加创建/更新 prototype 操作；返回结果通过 `metadata.operationType` 区分 | 无异常；同名视为更新 |
 | `design_withdraw_relation_prototype` | `delete_prototype` | 添加删除 prototype 操作 | 目标不存在报错；被 edge 使用时报错 |
 
@@ -252,10 +252,10 @@ Parameters: {}
 | `design_withdraw_context` 目标不存在 | 错误："Context 'X' not found" |
 | `design_refine_concept` 目标不存在 | 错误："Concept 'X' not found" |
 | `design_withdraw_concept` 目标不存在 | 错误："Concept 'X' not found" |
-| `design_relate_concepts` from 不存在 | 错误："Source concept 'X' not found" |
-| `design_relate_concepts` to 不存在 | 错误："Target concept 'X' not found" |
+| `design_relate_concepts` left 不存在 | 错误："Source concept 'X' not found" |
+| `design_relate_concepts` right 不存在 | 错误："Target concept 'X' not found" |
 | `design_relate_concepts` relation 不存在 | 错误："Prototype 'X' not found" |
-| `design_withdraw_relation` from/to 不存在 | 错误："Concept 'X' not found" |
+| `design_withdraw_relation` left/right 不存在 | 错误："Concept 'X' not found" |
 | `design_withdraw_relation_prototype` 目标不存在 | 错误："Prototype 'X' not found" |
 
 #### 删除约束
