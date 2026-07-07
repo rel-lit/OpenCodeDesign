@@ -1,17 +1,16 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer, Schema } from "effect"
+import { Effect, Schema } from "effect"
 import { existsSync } from "node:fs"
 import { Database } from "@opencode-ai/core/database/database"
 import { EventV2 } from "@opencode-ai/core/event"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { testEffect } from "../../lib/effect"
 import { SessionTrace } from "../../../src/design/system/session-trace"
 import { EventV2Bridge } from "../../../src/event-v2-bridge"
 import { TestInstance } from "../../fixture/fixture"
 
-const testLayer = Layer.mergeAll(
-  SessionTrace.defaultLayer,
-  EventV2Bridge.defaultLayer,
-  Database.defaultLayer,
+const testLayer = LayerNode.compile(
+  LayerNode.group([SessionTrace.node, EventV2Bridge.node, Database.node]),
 )
 
 const it = testEffect(testLayer)

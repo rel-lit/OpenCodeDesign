@@ -1,6 +1,8 @@
 import { Clock, Context, Effect, Layer } from "effect"
 import type { Scope } from "effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { Project } from "@opencode-ai/schema/project"
+import type { InstanceContext } from "@/project/instance-context"
 import { InstanceState } from "@/effect/instance-state"
 import { InstanceRef } from "@/effect/instance-ref"
 import { registerBeforeDisposer } from "@/effect/instance-registry"
@@ -170,6 +172,20 @@ export const layer = (options?: LayerOptions) =>
       Effect.runPromise(
         saveWorkingSetIfPossible().pipe(
           Effect.provideService(DesignStore.Service, designStore),
+          Effect.provideService(InstanceRef, {
+            directory,
+            worktree: directory,
+            project: {
+              id: Project.ID.global,
+              worktree: directory,
+              vcs: undefined,
+              name: undefined,
+              icon: undefined,
+              commands: undefined,
+              time: { created: 0, updated: 0, initialized: undefined },
+              sandboxes: [],
+            },
+          } satisfies InstanceContext),
         ),
       ),
     )
@@ -749,9 +765,9 @@ export const layer = (options?: LayerOptions) =>
 
 export const defaultLayer = Layer.suspend(() =>
   layer().pipe(
-    Layer.provide(DesignStore.defaultLayer),
-    Layer.provide(TemporaryWorkingSet.defaultLayer),
-    Layer.provide(DesignChangeBuffer.defaultLayer),
+    Layer.provide(LayerNode.compile(DesignStore.node)),
+    Layer.provide(LayerNode.compile(TemporaryWorkingSet.node)),
+    Layer.provide(LayerNode.compile(DesignChangeBuffer.node)),
   ),
 )
 

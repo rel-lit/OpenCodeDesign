@@ -202,7 +202,7 @@ export const layer = Layer.effect(
 export const defaultLayer = layer.pipe(
   Layer.provide(NodeFileSystem.layer),
   Layer.provide(NodePath.layer),
-  Layer.provide(EventV2Bridge.defaultLayer),
+  Layer.provide(LayerNode.compile(EventV2Bridge.node)),
 )
 
 export const node = LayerNode.make({

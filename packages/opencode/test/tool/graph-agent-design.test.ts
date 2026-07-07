@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Fiber, Layer, Queue, Context } from "effect"
+import { Effect, Fiber, Layer, Queue } from "effect"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { testEffect } from "../lib/effect"
 import { Design } from "../../src/design/design"
 import { GraphAgentDesignTools } from "../../src/tool/design"
 import { DesignGetContextTool, DesignGetConceptTool, DesignListPrototypesTool } from "../../src/tool/design"
-import { DesignStore } from "../../src/design/store/store"
 import { Tool } from "@/tool/tool"
 import { Agent } from "../../src/agent/agent"
 import { Truncate } from "@/tool/truncate"
@@ -14,8 +14,6 @@ import { InstanceStore } from "../../src/project/instance-store"
 import { Question } from "../../src/question"
 import { EventV2Bridge } from "../../src/event-v2-bridge"
 import { GraphAgent } from "../../src/design/agent/types"
-
-const testDesignLayer = Design.layer().pipe(Layer.provide(DesignStore.defaultLayer))
 
 const makeCtx = () => ({
   sessionID: SessionID.descending(),
@@ -33,11 +31,14 @@ const makeCtx = () => ({
 
 const it = testEffect(testInstanceStoreLayer)
 
-const provideDesign = Layer.mergeAll(
-  Truncate.defaultLayer,
-  Agent.defaultLayer,
-  testDesignLayer,
-  Question.layer.pipe(Layer.provideMerge(EventV2Bridge.defaultLayer)),
+const provideDesign = LayerNode.compile(
+  LayerNode.group([
+    Truncate.node,
+    Agent.node,
+    Design.node,
+    Question.node,
+    EventV2Bridge.node,
+  ]),
 )
 
 const pendingQuestion = Effect.fn("GraphAgentDesignTest.pendingQuestion")(function* (question: Question.Interface) {
@@ -531,7 +532,7 @@ describe("GraphAgent internal design tools", () => {
       const testInstance = yield* TestInstance
       const directory = testInstance.directory
 
-      const designLayer = Design.layer().pipe(Layer.provide(DesignStore.defaultLayer))
+      const designLayer = LayerNode.compile(Design.node)
       const designLayerLive = Layer.merge(designLayer, Layer.succeed(Agent.Service, yield* Agent.Service))
 
       const first = yield* provideInstanceEffect(directory)(

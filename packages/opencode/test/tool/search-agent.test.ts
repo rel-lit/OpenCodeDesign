@@ -2,15 +2,16 @@ import { afterEach, describe, expect } from "bun:test"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Database } from "@opencode-ai/core/database/database"
 import { Effect, Layer } from "effect"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Agent } from "../../src/agent/agent"
 import { BackgroundJob } from "@/background/job"
 import { Design } from "@/design/design"
-import { DesignStore } from "@/design/store/store"
 import { SessionTrace } from "@/design/system/session-trace"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Config } from "@/config/config"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
+import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { Session } from "@/session/session"
 import type { SessionPrompt } from "../../src/session/prompt"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
@@ -36,40 +37,24 @@ const ref = {
   modelID: ModelV2.ID.make("test-model"),
 }
 
-const layer = Layer.mergeAll(
-  Agent.defaultLayer,
-  BackgroundJob.defaultLayer,
-  EventV2Bridge.defaultLayer,
-  Config.defaultLayer,
-  CrossSpawnSpawner.defaultLayer,
-  Session.defaultLayer,
-  SessionRunState.defaultLayer,
-  SessionStatus.defaultLayer,
-  Truncate.defaultLayer,
-  ToolRegistry.defaultLayer,
-  SessionTrace.defaultLayer,
-  Database.defaultLayer,
-  RuntimeFlags.layer(),
-).pipe(Layer.provide(Ripgrep.defaultLayer))
-
-const designLayer = Design.layer().pipe(Layer.provide(DesignStore.defaultLayer))
-
 const servicesLayer = Layer.mergeAll(
-  Agent.defaultLayer,
-  BackgroundJob.defaultLayer,
-  EventV2Bridge.defaultLayer,
-  Config.defaultLayer,
-  CrossSpawnSpawner.defaultLayer,
-  Session.defaultLayer,
-  SessionRunState.defaultLayer,
-  SessionStatus.defaultLayer,
-  Truncate.defaultLayer,
-  ToolRegistry.defaultLayer,
-  SessionTrace.defaultLayer,
-  Database.defaultLayer,
+  LayerNode.compile(Agent.node),
+  LayerNode.compile(BackgroundJob.node),
+  LayerNode.compile(EventV2Bridge.node),
+  LayerNode.compile(Config.node),
+  LayerNode.compile(CrossSpawnSpawner.node),
+  LayerNode.compile(Session.node),
+  LayerNode.compile(SessionRunState.node),
+  LayerNode.compile(SessionStatus.node),
+  LayerNode.compile(Truncate.node),
+  LayerNode.compile(ToolRegistry.node),
+  LayerNode.compile(SessionTrace.node),
+  LayerNode.compile(SessionProjector.node),
+  LayerNode.compile(Database.node),
+  LayerNode.compile(Design.node),
+  LayerNode.compile(Ripgrep.node),
   RuntimeFlags.layer(),
-  designLayer,
-).pipe(Layer.provide(Ripgrep.defaultLayer))
+)
 
 const it = testEffect(testInstanceStoreLayer)
 

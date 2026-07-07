@@ -2,6 +2,7 @@ import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import { Provider } from "@/provider/provider"
 import { generateObject } from "ai"
 import { Context, Effect, Layer, Schema } from "effect"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import type { Decoder } from "effect/Schema"
 
 export class GenerateObjectError extends Schema.TaggedErrorClass<GenerateObjectError>()("DesignAgentLlmGenerateObjectError", {
@@ -59,6 +60,12 @@ export const layer = Layer.effect(
   }),
 )
 
-export const defaultLayer = layer.pipe(Layer.provide(Provider.defaultLayer))
+export const defaultLayer = layer.pipe(Layer.provide(LayerNode.compile(Provider.node)))
+
+export const node = LayerNode.make({
+  service: Service,
+  layer: defaultLayer,
+  deps: [Provider.node],
+})
 
 export * as DesignAgentLlm from "./llm"
