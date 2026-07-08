@@ -2769,6 +2769,33 @@ ToolRegistry.register({
       return q.question.replace(/^\[design-(approval|finalize)\]\s*/, "")
     })
 
+    const bodyLines = createMemo(() => body().split("\n"))
+
+    const renderLine = (line: string) => {
+      let tone: "success" | "warning" | "danger" | undefined
+      if (line.startsWith("- 新增")) tone = "success"
+      else if (line.startsWith("- 更新")) tone = "warning"
+      else if (line.startsWith("- 删除")) tone = "danger"
+      if (tone) {
+        const variable =
+          tone === "success"
+            ? "var(--v2-state-fg-success)"
+            : tone === "warning"
+              ? "var(--v2-state-fg-warning)"
+              : "var(--v2-state-fg-danger)"
+        return (
+          <div data-component="design-approval-line" data-tone={tone} style={{ color: variable }}>
+            {line}
+          </div>
+        )
+      }
+      return (
+        <div data-component="design-approval-line">
+          <Markdown text={line} />
+        </div>
+      )
+    }
+
     return (
       <BasicTool
         {...props}
@@ -2787,7 +2814,7 @@ ToolRegistry.register({
                 return (
                   <div data-slot="design-approval-answer-item">
                     <div data-slot="design-approval-question">
-                      <Markdown text={body()} />
+                      <For each={bodyLines()}>{(line) => renderLine(line)}</For>
                     </div>
                     <div data-slot="design-approval-answer">
                       {answer().join(", ") || i18n.t("ui.question.answer.none")}
