@@ -99,10 +99,22 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
           ),
         )
 
+        const HARDCODED_IGNORED_PREFIXES = [".opencode/logs/sessions/"]
+
         const ignore = Effect.fnUntraced(function* (files: string[]) {
           if (!files.length) return new Set<string>()
+          const normalized = (item: string) => item.replaceAll("\\", "/")
+          const hardcodedSet = new Set<string>()
+          for (const item of files) {
+            const itemNorm = normalized(item)
+            if (HARDCODED_IGNORED_PREFIXES.some((prefix) => itemNorm.startsWith(prefix))) {
+              hardcodedSet.add(item)
+            }
+          }
+          const remaining = files.filter((item) => !hardcodedSet.has(item))
+          if (!remaining.length) return hardcodedSet
           // check-ignore treats a leading colon as pathspec magic but accepts and echoes a protective ./ prefix.
-          const checkIgnorePaths = files.map((item) => (item.startsWith(":") ? `./${item}` : item))
+          const checkIgnorePaths = remaining.map((item) => (item.startsWith(":") ? `./${item}` : item))
           const check = yield* git(
             [
               ...quote,
@@ -120,12 +132,15 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
               stdin: encodeNulTerminatedPaths(checkIgnorePaths),
             },
           )
-          if (check.code !== 0 && check.code !== 1) return new Set<string>()
+          if (check.code !== 0 && check.code !== 1) return hardcodedSet
           return new Set(
-            check.text
-              .split("\0")
-              .filter(Boolean)
-              .map((item) => (item.startsWith("./:") ? item.slice(2) : item)),
+            [
+              ...hardcodedSet,
+              ...check.text
+                .split("\0")
+                .filter(Boolean)
+                .map((item) => (item.startsWith("./:") ? item.slice(2) : item)),
+            ],
           )
         })
 
