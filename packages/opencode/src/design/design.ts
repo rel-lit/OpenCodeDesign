@@ -66,6 +66,19 @@ export interface Interface {
   readonly findNodeByNameOrId: (nameOrId: string) => Effect.Effect<DesignTypes.Node | undefined>
   readonly listEdgesForNode: GraphEngine.Interface["listEdgesForNode"]
   readonly summarizeGraphState: (state: DesignTypes.GraphState) => Effect.Effect<string>
+  readonly getDiagnostics: (sessionID: string) => Effect.Effect<{
+    graph: {
+      nodeCount: number
+      edgeCount: number
+      contextCount: number
+      prototypeCount: number
+      getStateCallCount: number
+    }
+    eventLogCount: number
+    workingSetCount: number
+    temporaryWorkingSetCount: number
+    changeBufferCount: number
+  }>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Design") {}
@@ -486,6 +499,25 @@ export const layer = (options?: LayerOptions) =>
       ),
     )
 
+    const getDiagnostics = Effect.fn("Design.getDiagnostics")((sessionID: string) =>
+      use((state) =>
+        Effect.gen(function* () {
+          const graphStats = yield* state.graph.getStats()
+          const events = yield* state.eventLog.list()
+          const workingSet = yield* state.workingSet.list()
+          const temporary = yield* state.temporaryWorkingSet.get(sessionID)
+          const bufferOps = yield* state.changeBuffer.listOperations(sessionID)
+          return {
+            graph: graphStats,
+            eventLogCount: events.length,
+            workingSetCount: workingSet.length,
+            temporaryWorkingSetCount: temporary.entries.length,
+            changeBufferCount: bufferOps.length,
+          }
+        }),
+      ),
+    )
+
     return Service.of({
       listContexts,
       getContext,
@@ -759,6 +791,7 @@ export const layer = (options?: LayerOptions) =>
       findContextByNameOrId,
       findNodeByNameOrId,
       summarizeGraphState,
+      getDiagnostics,
     })
   }),
 )

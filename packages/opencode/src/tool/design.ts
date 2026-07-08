@@ -609,10 +609,22 @@ export const DesignGetStateSummaryTool = Tool.define<
       execute: (args, ctx) =>
         Effect.gen(function* () {
           const state = yield* design.getState()
+          const diagnostics = yield* design.getDiagnostics(ctx.sessionID)
+          const summary = yield* design.summarizeGraphState(state)
+          const lines = [
+            summary,
+            ``,
+            `Diagnostics:`,
+            `- getState calls: ${diagnostics.graph.getStateCallCount}`,
+            `- event log: ${diagnostics.eventLogCount} events`,
+            `- working set: ${diagnostics.workingSetCount} entries`,
+            `- temporary working set: ${diagnostics.temporaryWorkingSetCount} entries`,
+            `- change buffer: ${diagnostics.changeBufferCount} operations`,
+          ]
           return {
             title: "Design graph summary",
-            output: yield* design.summarizeGraphState(state),
-            metadata: {},
+            output: lines.join("\n"),
+            metadata: { diagnostics },
           }
         }).pipe(Effect.orDie),
     }
@@ -1499,7 +1511,7 @@ export const DesignListBufferOperationsTool = Tool.define<
           return {
             title: "Buffered operations",
             output: lines.join("\n") || "No buffered operations.",
-            metadata: { operations },
+            metadata: { operations, operationCount: operations.length },
           }
         }).pipe(Effect.orDie),
     }

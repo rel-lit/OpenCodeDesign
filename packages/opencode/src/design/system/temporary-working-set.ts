@@ -56,6 +56,12 @@ export const make = (graph: GraphEngine.Interface, activeWorkingSet: WorkingSet.
     const newEntries = entries.filter((e) => !existingIds.has(e.id))
     const updated = { entries: [...newEntries, ...ws.entries] }
     store.set(sessionID, updated)
+    if (updated.entries.length > 100) {
+      yield* Effect.logWarning("DesignTemporaryWorkingSet exceeded 100 entries", {
+        sessionID,
+        entryCount: updated.entries.length,
+      })
+    }
     return updated
   })
 

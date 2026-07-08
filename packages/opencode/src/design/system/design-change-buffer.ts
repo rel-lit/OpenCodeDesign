@@ -100,6 +100,9 @@ export const make = (_graph: GraphEngine.Interface) => {
       const id = crypto.randomUUID()
       const bufferOperation: GraphAgentTypes.BufferOperation = { ...operation, id }
       operations.push(bufferOperation)
+      if (operations.length > 100) {
+        yield* Effect.logWarning("DesignChangeBuffer exceeded 100 operations", { sessionID, operationCount: operations.length })
+      }
       return bufferOperation
     },
   )

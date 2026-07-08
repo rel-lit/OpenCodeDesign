@@ -63,6 +63,13 @@ export interface Interface {
     prototypes: DesignTypes.RelationPrototype[]
     contexts: DesignTypes.BoundedContext[]
   }>
+  readonly getStats: () => Effect.Effect<{
+    getStateCallCount: number
+    nodeCount: number
+    edgeCount: number
+    prototypeCount: number
+    contextCount: number
+  }>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/DesignGraphEngine") {}
@@ -80,6 +87,7 @@ export const makeEngine = Effect.fn("GraphEngine.make")(function* () {
     workingSet: { entries: [], capacity: 20 },
     eventLog: { events: [] },
   }
+  let getStateCallCount = 0
 
   const now = () => Date.now()
 
@@ -288,11 +296,30 @@ export const makeEngine = Effect.fn("GraphEngine.make")(function* () {
   })
 
   const getState = Effect.fnUntraced(function* () {
-    return {
+    getStateCallCount++
+    const result = {
       nodes: [...state.nodes],
       edges: [...state.edges],
       prototypes: [...state.prototypes],
       contexts: [...state.contexts],
+    }
+    yield* Effect.logDebug("GraphEngine.getState", {
+      callCount: getStateCallCount,
+      nodeCount: result.nodes.length,
+      edgeCount: result.edges.length,
+      contextCount: result.contexts.length,
+      prototypeCount: result.prototypes.length,
+    })
+    return result
+  })
+
+  const getStats = Effect.fnUntraced(function* () {
+    return {
+      getStateCallCount,
+      nodeCount: state.nodes.length,
+      edgeCount: state.edges.length,
+      prototypeCount: state.prototypes.length,
+      contextCount: state.contexts.length,
     }
   })
 
@@ -321,6 +348,7 @@ export const makeEngine = Effect.fn("GraphEngine.make")(function* () {
     listEdges,
     listEdgesForNode,
     getState,
+    getStats,
   } satisfies Interface
 })
 
