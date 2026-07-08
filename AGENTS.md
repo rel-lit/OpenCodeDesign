@@ -4,6 +4,47 @@
 - The default branch in this repo is `dev`.
 - Local `main` ref may not exist; use `dev` or `origin/dev` for diffs.
 
+## OpenCodeDesign Fork Context
+
+### Branch Strategy
+
+- `dev` is a clean mirror of `upstream/dev`. Do not put OpenCodeDesign-specific changes on it.
+- `design` is the working branch. It contains `upstream/dev` + OpenCodeDesign changes.
+- When syncing, reset `origin/dev` to `upstream/dev` and rebase/merge `design` on top.
+- Use short branch names (max 3 words, hyphenated) for temporary work.
+
+### Design Subsystem
+
+Design is a semantic graph of bounded contexts, concepts, relation prototypes, and edges.
+
+Key files:
+- `packages/opencode/src/design/design.ts` — main service, layer/node entrypoint.
+- `packages/opencode/src/design/core/graph.ts` — in-memory graph engine.
+- `packages/opencode/src/design/core/working-set.ts` — persistent active working set.
+- `packages/opencode/src/design/system/design-change-buffer.ts` — operation buffer for change workflow.
+- `packages/opencode/src/design/system/session-trace.ts` — subagent event tracing.
+- `packages/opencode/src/design/system/temporary-working-set.ts` — per-session working set.
+- `packages/opencode/src/tool/design.ts` — all design tools (graph agent, chat agent, search tools).
+
+Architecture:
+- Migrated from `.defaultLayer` to `LayerNode` (`node`). Keep using `node` for new code.
+- Design operations go through the Change Buffer first. They are only applied when `design_finalize_change` is approved.
+- `design_withdraw_*` tools support `cascade: true` to delete dependent entities. Cascade operations are added parent-first so `design_undo_buffer_operation` with `cascade: true` can undo the whole chain.
+
+### Known Pitfalls
+
+- Session trace logs are written to `<project>/.opencode/logs/sessions/<sessionID>.jsonl`. They must not be tracked by the snapshot system; the directory is hardcoded ignored in `packages/opencode/src/snapshot/index.ts`.
+- `GraphEngine.getState()` returns a full copy of the graph. Avoid calling it repeatedly in tight loops.
+- `TemporaryWorkingSet` and `DesignChangeBuffer` are unbounded. Watch for warnings when they exceed 100 entries.
+- `DesignStore.saveGraphState()` deletes and re-inserts all graph rows on every transaction.
+
+### Debugging Desktop / OOM
+
+- Start desktop: `bun run dev:desktop` from repo root.
+- Sidecar logs: `%APPDATA%\ai.opencode.desktop.dev\logs\<timestamp>\server.log`
+- Session trace logs: `<project>/.opencode/logs/sessions/<sessionID>.jsonl`
+- To capture OOM heap snapshots: `$env:NODE_OPTIONS = "--max-old-space-size=8192 --heapsnapshot-near-heap-limit=3"`
+
 ## Tool Usage Discipline
 
 - Always prefer edit for existing files. Only use write when creating a new file.
