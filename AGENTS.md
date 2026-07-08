@@ -6,6 +6,8 @@
 
 ## OpenCodeDesign Fork Context
 
+See `docs/vision.md` for the project vision and roadmap.
+
 ### Branch Strategy
 
 - `dev` is a clean mirror of `upstream/dev`. Do not put OpenCodeDesign-specific changes on it.
