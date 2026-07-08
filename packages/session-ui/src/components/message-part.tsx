@@ -1614,10 +1614,18 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
   const taskLikeInput = createMemo(() => {
     if (!isDesignSubagentTool(part().tool)) return input()
     const { prompt: _, ...rest } = input()
+    const metadata = partMetadata()
+    const state = part().state as any
     return {
       ...rest,
-      subagent_type: designSubagentType(part().tool),
-      description: designSubagentSubtitle(i18n, part().tool),
+      subagent_type:
+        typeof metadata.subagent_type === "string"
+          ? metadata.subagent_type
+          : designSubagentType(part().tool),
+      description:
+        typeof state?.title === "string" && state.title
+          ? state.title
+          : designSubagentSubtitle(i18n, part().tool),
     }
   })
 
@@ -2063,6 +2071,10 @@ ToolRegistry.register({
       if (typeof value === "string" && value) return value
       return taskSession(props.input, location.pathname, data.store.session, data.store.agent)
     })
+    const graphSessionId = createMemo(() => {
+      const value = props.metadata.graphSessionId
+      if (typeof value === "string" && value) return value
+    })
     const agent = createMemo(() => taskAgent(props.input.subagent_type, data.store.agent))
     const title = createMemo(() => agent().name ?? i18n.t("ui.tool.agent.default"))
     const tone = createMemo(() => agent().color)
@@ -2083,6 +2095,9 @@ ToolRegistry.register({
     const href = createMemo(() => sessionLink(childSessionId(), location.pathname, data.sessionHref))
     const clickable = createMemo(() => !!(childSessionId() && (data.navigateToSession || href())))
 
+    const graphHref = createMemo(() => sessionLink(graphSessionId(), location.pathname, data.sessionHref))
+    const graphClickable = createMemo(() => !!(graphSessionId() && (data.navigateToSession || graphHref())))
+
     const open = () => {
       const id = childSessionId()
       if (!id) return
@@ -2094,11 +2109,28 @@ ToolRegistry.register({
       if (value) window.location.assign(value)
     }
 
+    const openGraph = () => {
+      const id = graphSessionId()
+      if (!id) return
+      if (data.navigateToSession) {
+        data.navigateToSession(id)
+        return
+      }
+      const value = graphHref()
+      if (value) window.location.assign(value)
+    }
+
     const navigate = (event: MouseEvent) => {
       if (!data.navigateToSession) return
       if (event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
       event.preventDefault()
       open()
+    }
+    const navigateGraph = (event: MouseEvent) => {
+      if (!graphClickable()) return
+      event.preventDefault()
+      event.stopPropagation()
+      openGraph()
     }
     const navigateKey = (event: KeyboardEvent) => {
       if (!clickable() || href()) return
@@ -2134,6 +2166,23 @@ ToolRegistry.register({
             </Show>
           </div>
         </div>
+        <Show when={graphClickable()}>
+          <div
+            data-component="task-tool-action"
+            role="button"
+            tabIndex={0}
+            aria-label="Open graph subagent"
+            onClick={navigateGraph}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault()
+                openGraph()
+              }
+            }}
+          >
+            <Icon name="square-arrow-top-right" size="small" />
+          </div>
+        </Show>
         <Show when={clickable()}>
           <div data-component="task-tool-action">
             <Icon name="square-arrow-top-right" size="small" />

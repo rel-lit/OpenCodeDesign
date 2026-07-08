@@ -183,7 +183,11 @@ export const DesignSearchProjectTool = Tool.define(
             graphSummary: args.graph_summary,
             focus: args.focus,
           })
-          const prompt = buildSearchAgentPrompt({ graphSummary, retrievalRequirements: args.intent, focus: args.focus })
+          const prompt = buildSearchAgentPrompt({
+            graphSummary: graphSummary.output,
+            retrievalRequirements: args.intent,
+            focus: args.focus,
+          })
           const result = yield* task.execute(
             {
               description: "Design project search",
@@ -198,6 +202,7 @@ export const DesignSearchProjectTool = Tool.define(
             metadata: {
               ...result.metadata,
               subagent_type: "design-search",
+              ...(graphSummary.sessionId ? { graphSessionId: graphSummary.sessionId } : {}),
             } as Record<string, unknown>,
           }
         }),
@@ -238,7 +243,7 @@ export const DesignSearchWebTool = Tool.define(
             focus: args.focus,
           })
           const prompt = buildSearchAgentPrompt({
-            graphSummary,
+            graphSummary: graphSummary.output,
             retrievalRequirements: `Search the web for: ${args.query}`,
             focus: args.focus,
           })
@@ -256,6 +261,7 @@ export const DesignSearchWebTool = Tool.define(
             metadata: {
               ...result.metadata,
               subagent_type: "design-search",
+              ...(graphSummary.sessionId ? { graphSessionId: graphSummary.sessionId } : {}),
             } as Record<string, unknown>,
           }
         }),
@@ -269,9 +275,9 @@ function buildGraphSummary(input: {
   ctx: Tool.Context
   graphSummary?: string
   focus?: { readonly contexts?: ReadonlyArray<string>; readonly concepts?: ReadonlyArray<string> }
-}): Effect.Effect<string> {
+}): Effect.Effect<{ output: string; sessionId?: string }> {
   return Effect.gen(function* () {
-    if (input.graphSummary) return input.graphSummary
+    if (input.graphSummary) return { output: input.graphSummary }
 
     const focusParts: string[] = []
     if (input.focus?.contexts && input.focus.contexts.length > 0) {
@@ -296,7 +302,10 @@ function buildGraphSummary(input: {
       },
       input.ctx,
     )
-    return result.output
+    return {
+      output: result.output,
+      sessionId: result.metadata.sessionId as string,
+    }
   })
 }
 

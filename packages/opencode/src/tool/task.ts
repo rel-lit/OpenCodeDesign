@@ -187,6 +187,7 @@ export const TaskTool = Tool.define(
       const metadata = {
         parentSessionId: ctx.sessionID,
         sessionId: nextSession.id,
+        subagent_type: params.subagent_type,
         model,
         ...(runInBackground ? { background: true } : {}),
       }
