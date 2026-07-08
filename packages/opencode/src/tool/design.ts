@@ -1042,7 +1042,20 @@ export const DesignWithdrawContextTool = Tool.define<
           }
 
           const operationIds: string[] = []
+          const contextOp = yield* design.bufferAddOperation(ctx.sessionID, {
+            type: "delete_context",
+            description: `Delete context ${context.name}`,
+            payload: { id: context.id },
+          })
+          operationIds.push(contextOp.id)
+
           for (const node of childNodes) {
+            const nodeOp = yield* design.bufferAddOperation(ctx.sessionID, {
+              type: "delete_node",
+              description: `Delete concept ${node.name}`,
+              payload: { id: node.id },
+            })
+            operationIds.push(nodeOp.id)
             const edges = state.edges.filter((e) => e.leftNodeId === node.id || e.rightNodeId === node.id)
             for (const edge of edges) {
               const edgeOp = yield* design.bufferAddOperation(ctx.sessionID, {
@@ -1052,23 +1065,12 @@ export const DesignWithdrawContextTool = Tool.define<
               })
               operationIds.push(edgeOp.id)
             }
-            const nodeOp = yield* design.bufferAddOperation(ctx.sessionID, {
-              type: "delete_node",
-              description: `Delete concept ${node.name}`,
-              payload: { id: node.id },
-            })
-            operationIds.push(nodeOp.id)
           }
 
-          const op = yield* design.bufferAddOperation(ctx.sessionID, {
-            type: "delete_context",
-            description: `Delete context ${context.name}`,
-            payload: { id: context.id },
-          })
           return {
             title: `Withdrew context ${context.name}`,
             output: `Context ${context.name} (${context.id}) queued for removal.${childNodes.length > 0 ? ` ${childNodes.length} concept(s) and their relations also queued.` : ""}`,
-            metadata: { operationId: op.id, operationType: "delete_context", operationIds },
+            metadata: { operationId: contextOp.id, operationType: "delete_context", operationIds },
           }
         }).pipe(Effect.orDie),
     }
@@ -1504,6 +1506,13 @@ export const DesignWithdrawRelationPrototypeTool = Tool.define<
           }
 
           const operationIds: string[] = []
+          const prototypeOp = yield* design.bufferAddOperation(ctx.sessionID, {
+            type: "delete_prototype",
+            description: `Delete prototype ${prototype.name}`,
+            payload: { id: prototype.id },
+          })
+          operationIds.push(prototypeOp.id)
+
           for (const edge of usingEdges) {
             const edgeOp = yield* design.bufferAddOperation(ctx.sessionID, {
               type: "delete_edge",
@@ -1513,15 +1522,10 @@ export const DesignWithdrawRelationPrototypeTool = Tool.define<
             operationIds.push(edgeOp.id)
           }
 
-          const op = yield* design.bufferAddOperation(ctx.sessionID, {
-            type: "delete_prototype",
-            description: `Delete prototype ${prototype.name}`,
-            payload: { id: prototype.id },
-          })
           return {
             title: `Withdrew prototype ${prototype.name}`,
             output: `Prototype ${prototype.name} (${prototype.id}) queued for removal.${usingEdges.length > 0 ? ` ${usingEdges.length} relation(s) also queued.` : ""}`,
-            metadata: { operationId: op.id, operationType: "delete_prototype", operationIds },
+            metadata: { operationId: prototypeOp.id, operationType: "delete_prototype", operationIds },
           }
         }).pipe(Effect.orDie),
     }

@@ -40,7 +40,7 @@ const isReferencedBy = (op: GraphAgentTypes.BufferOperation, candidate: GraphAge
   switch (op.type) {
     case "create_context":
     case "update_context": {
-      if (candidate.type !== "create_node") return false
+      if (candidate.type !== "create_node" && candidate.type !== "delete_node") return false
       const payload = candidate.payload as { contextId?: string }
       return payload.contextId === opId
     }
@@ -54,7 +54,22 @@ const isReferencedBy = (op: GraphAgentTypes.BufferOperation, candidate: GraphAge
     }
     case "create_prototype":
     case "update_prototype": {
-      if (candidate.type !== "create_edge" && candidate.type !== "update_edge") return false
+      if (candidate.type !== "create_edge" && candidate.type !== "update_edge" && candidate.type !== "delete_edge") return false
+      const payload = candidate.payload as { prototypeId?: string }
+      return payload.prototypeId === opId
+    }
+    case "delete_context": {
+      if (candidate.type !== "delete_node") return false
+      const payload = candidate.payload as { contextId?: string }
+      return payload.contextId === opId
+    }
+    case "delete_node": {
+      if (candidate.type !== "delete_edge") return false
+      const payload = candidate.payload as { leftNodeId?: string; rightNodeId?: string }
+      return payload.leftNodeId === opId || payload.rightNodeId === opId
+    }
+    case "delete_prototype": {
+      if (candidate.type !== "delete_edge") return false
       const payload = candidate.payload as { prototypeId?: string }
       return payload.prototypeId === opId
     }
