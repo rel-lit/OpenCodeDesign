@@ -7,6 +7,12 @@ export interface WorkingSetEntry {
   briefSemantics: string
 }
 
+export interface DiffAnalysis {
+  missingInCode: Array<{ nodeId?: string; name: string; reason: string }>
+  divergentRelations: Array<{ designEdge?: string; actualCode: string; reason: string }>
+  references: Array<{ file: string; line?: number; snippet: string }>
+}
+
 export type BufferOperationType =
   | "create_context"
   | "update_context"

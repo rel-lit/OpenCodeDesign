@@ -1,14 +1,14 @@
-import type { SearchAgent } from "@/design/agent/search"
+import type { DiffAnalysis } from "@/design/agent/types"
 
 export interface PlanHandoffPayload {
   mode: "plan"
   source: "design"
-  diffAnalysis: SearchAgent.Output["diffAnalysis"]
+  diffAnalysis: DiffAnalysis
   designGraphSummary: string
 }
 
 export const build = (input: {
-  diffAnalysis: SearchAgent.Output["diffAnalysis"]
+  diffAnalysis: DiffAnalysis
   designGraphSummary: string
 }): PlanHandoffPayload => ({
   mode: "plan",
