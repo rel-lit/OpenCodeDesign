@@ -29,12 +29,21 @@ export interface BufferOperation {
 }
 
 export interface GraphDelta {
+  addContexts?: Array<{ id: string; name: string; semantics?: string }>
+  updateContexts?: Array<{ id: string; patch: { name?: string; semantics?: string } }>
+  deleteContextIds?: string[]
   addNodes?: NodeInput[]
   updateNodes?: Array<{ id: string; patch: Partial<NodeInput> }>
   deleteNodeIds?: string[]
   addEdges?: EdgeInput[]
   updateEdges?: Array<{ leftNodeId: string; rightNodeId: string; patch: Partial<EdgeInput> }>
   deleteEdgeKeys?: string[]
+  addPrototypes?: Array<{ id: string; name: string; defaultSemantics?: string; parameterSchema?: Record<string, unknown> }>
+  updatePrototypes?: Array<{
+    id: string
+    patch: { name?: string; defaultSemantics?: string; parameterSchema?: Record<string, unknown> }
+  }>
+  deletePrototypeIds?: string[]
 }
 
 export interface NodeInput

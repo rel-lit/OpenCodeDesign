@@ -136,6 +136,21 @@ export const make = (_graph: GraphEngine.Interface) => {
 
     for (const op of operations) {
       switch (op.type) {
+        case "create_context": {
+          const payload = op.payload as { id: string; name: string; semantics?: string }
+          delta.addContexts = [...(delta.addContexts ?? []), payload]
+          break
+        }
+        case "update_context": {
+          const payload = op.payload as { id: string; patch: { name?: string; semantics?: string } }
+          delta.updateContexts = [...(delta.updateContexts ?? []), payload]
+          break
+        }
+        case "delete_context": {
+          const payload = op.payload as { id: string }
+          delta.deleteContextIds = [...(delta.deleteContextIds ?? []), payload.id]
+          break
+        }
         case "create_node": {
           delta.addNodes = [...(delta.addNodes ?? []), op.payload as GraphAgentTypes.NodeInput]
           break
@@ -169,6 +184,29 @@ export const make = (_graph: GraphEngine.Interface) => {
             ...(delta.deleteEdgeKeys ?? []),
             DesignTypes.edgeKey(payload.leftNodeId, payload.rightNodeId),
           ]
+          break
+        }
+        case "create_prototype": {
+          const payload = op.payload as {
+            id: string
+            name: string
+            defaultSemantics?: string
+            parameterSchema?: Record<string, unknown>
+          }
+          delta.addPrototypes = [...(delta.addPrototypes ?? []), payload]
+          break
+        }
+        case "update_prototype": {
+          const payload = op.payload as {
+            id: string
+            patch: { name?: string; defaultSemantics?: string; parameterSchema?: Record<string, unknown> }
+          }
+          delta.updatePrototypes = [...(delta.updatePrototypes ?? []), payload]
+          break
+        }
+        case "delete_prototype": {
+          const payload = op.payload as { id: string }
+          delta.deletePrototypeIds = [...(delta.deletePrototypeIds ?? []), payload.id]
           break
         }
       }

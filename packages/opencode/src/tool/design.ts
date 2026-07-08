@@ -2057,6 +2057,22 @@ function formatPendingDelta(
 
     const lines: string[] = []
 
+    for (const context of delta.addContexts ?? []) {
+      lines.push(`- 新增上下文：${context.name}`)
+    }
+
+    for (const update of delta.updateContexts ?? []) {
+      const name = contextName(update.id)
+      const fields = Object.keys(update.patch ?? {})
+      const detail = fields.length ? `（更新字段：${fields.join("、")}）` : ""
+      lines.push(`- 更新上下文：${name}${detail}`)
+    }
+
+    for (const id of delta.deleteContextIds ?? []) {
+      const name = contextName(id)
+      lines.push(`- 删除上下文：${name}`)
+    }
+
     for (const node of delta.addNodes ?? []) {
       const ctx = contextName(node.contextId)
       lines.push(`- 新增概念：${node.name}（上下文：${ctx}）`)
@@ -2096,6 +2112,22 @@ function formatPendingDelta(
       } else {
         lines.push(`- 删除关系：${key}`)
       }
+    }
+
+    for (const prototype of delta.addPrototypes ?? []) {
+      lines.push(`- 新增原型：${prototype.name}`)
+    }
+
+    for (const update of delta.updatePrototypes ?? []) {
+      const name = prototypeName(update.id)
+      const fields = Object.keys(update.patch ?? {})
+      const detail = fields.length ? `（更新字段：${fields.join("、")}）` : ""
+      lines.push(`- 更新原型：${name}${detail}`)
+    }
+
+    for (const id of delta.deletePrototypeIds ?? []) {
+      const name = prototypeName(id)
+      lines.push(`- 删除原型：${name}`)
     }
 
     return lines.join("\n")
