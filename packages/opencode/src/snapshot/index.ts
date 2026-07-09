@@ -103,7 +103,10 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
 
         const ignore = Effect.fnUntraced(function* (files: string[]) {
           if (!files.length) return new Set<string>()
-          const normalized = (item: string) => item.replaceAll("\\", "/")
+          const normalized = (item: string) => {
+            const slash = item.replaceAll("\\", "/")
+            return slash.startsWith("./") ? slash.slice(2) : slash
+          }
           const hardcodedSet = new Set<string>()
           for (const item of files) {
             const itemNorm = normalized(item)
