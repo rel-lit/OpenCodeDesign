@@ -6,7 +6,6 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Agent } from "../../src/agent/agent"
 import { BackgroundJob } from "@/background/job"
 import { Design } from "@/design/design"
-import { SessionTrace } from "@/design/system/session-trace"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Config } from "@/config/config"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
@@ -48,7 +47,6 @@ const servicesLayer = Layer.mergeAll(
   LayerNode.compile(SessionStatus.node),
   LayerNode.compile(Truncate.node),
   LayerNode.compile(ToolRegistry.node),
-  LayerNode.compile(SessionTrace.node),
   LayerNode.compile(SessionProjector.node),
   LayerNode.compile(Database.node),
   LayerNode.compile(Design.node),

@@ -51,7 +51,6 @@ import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { Format } from "../../src/format"
 import { Design } from "../../src/design/design"
-import { SessionTrace } from "../../src/design/system/session-trace"
 import { TestInstance } from "../fixture/fixture"
 import { awaitWithTimeout, pollWithTimeout, testEffect } from "../lib/effect"
 import { reply, TestLLMServer } from "../lib/llm-server"
@@ -212,14 +211,12 @@ const promptRoot = LayerNode.group([
 
 function makePrompt(input?: { mcpInstructions?: MCP.ServerInstructions[]; processor?: "blocking" }) {
   const designMock = Layer.mock(Design.Service, {})
-  const sessionTraceMock = Layer.mock(SessionTrace.Service, {})
   const replacements = [
     [SessionSummary.node, summary],
     [LSP.node, lsp],
     [MCP.node, makeMcp(input?.mcpInstructions)],
     [RuntimeFlags.node, runtimeFlags],
     [Design.node, designMock],
-    [SessionTrace.node, sessionTraceMock],
   ] as const
   if (input?.processor === "blocking") {
     return LayerNode.compile(promptRoot, [...replacements, [SessionProcessor.node, blockingProcessor]])
@@ -230,14 +227,12 @@ function makePrompt(input?: { mcpInstructions?: MCP.ServerInstructions[]; proces
 function makeHttp(input?: { mcpInstructions?: MCP.ServerInstructions[]; processor?: "blocking" }) {
   const root = LayerNode.group([promptRoot, testLLMServerNode])
   const designMock = Layer.mock(Design.Service, {})
-  const sessionTraceMock = Layer.mock(SessionTrace.Service, {})
   const replacements = [
     [SessionSummary.node, summary],
     [LSP.node, lsp],
     [MCP.node, makeMcp(input?.mcpInstructions)],
     [RuntimeFlags.node, runtimeFlags],
     [Design.node, designMock],
-    [SessionTrace.node, sessionTraceMock],
   ] as const
   if (input?.processor === "blocking") {
     return LayerNode.compile(root, [...replacements, [SessionProcessor.node, blockingProcessor]])

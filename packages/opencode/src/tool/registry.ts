@@ -7,7 +7,6 @@ import {
   GraphAgentDesignTools,
 } from "./design"
 import { Design } from "@/design/design"
-import { SessionTrace } from "@/design/system/session-trace"
 import { Session } from "@/session/session"
 import { QuestionTool } from "./question"
 import { ShellTool } from "./shell"
@@ -463,7 +462,6 @@ export const node = LayerNode.make({
     MCP.node,
     Database.node,
     Design.node,
-    SessionTrace.node,
     Ripgrep.node,
   ],
 })
